@@ -29,6 +29,12 @@ import {
   type ParsedCsv,
   type AutoDetectResult,
 } from '@/lib/importNapper';
+import {
+  buildExportFilename,
+  exportCareDataToCsv,
+  getExportSummary,
+} from '@/lib/exportCareData';
+import { shareCsvFile } from '@/lib/shareCsvFile';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 
 const ROUTINE_NAP_OPTIONS: NapGoal[] = [2, 3, 4];
@@ -40,6 +46,9 @@ export default function ProfileScreen() {
   const saveBaby = useAppStore((s) => s.saveBaby);
   const importCareEvents = useAppStore((s) => s.importCareEvents);
   const events = useAppStore((s) => s.events);
+  const sleepPauses = useAppStore((s) => s.sleepPauses);
+  const feedings = useAppStore((s) => s.feedings);
+  const diapers = useAppStore((s) => s.diapers);
   const wakes = useAppStore((s) => s.wakes);
   const baby = useActiveBaby();
 
@@ -59,6 +68,7 @@ export default function ProfileScreen() {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [manualMapping, setManualMapping] = useState<Partial<ColumnMapping>>({});
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (baby) {
@@ -104,6 +114,60 @@ export default function ProfileScreen() {
       Alert.alert('Saved', 'Baby profile updated.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const exportSummary = useMemo(() => {
+    if (!baby) return null;
+    return getExportSummary({
+      baby,
+      events,
+      sleepPauses,
+      feedings,
+      diapers,
+      wakes,
+    });
+  }, [baby, events, sleepPauses, feedings, diapers, wakes]);
+
+  const handleExport = async () => {
+    if (!baby) {
+      Alert.alert('Profile required', 'Create a baby profile before exporting.');
+      return;
+    }
+
+    const summary = getExportSummary({
+      baby,
+      events,
+      sleepPauses,
+      feedings,
+      diapers,
+      wakes,
+    });
+
+    if (summary.total === 0) {
+      Alert.alert('Nothing to export', 'Log some sleep, feeds, or diapers first.');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const csv = exportCareDataToCsv({
+        baby,
+        events,
+        sleepPauses,
+        feedings,
+        diapers,
+        wakes,
+      });
+      const filename = buildExportFilename(baby.name);
+      await shareCsvFile(csv, filename);
+    } catch (err) {
+      Alert.alert(
+        'Export failed',
+        err instanceof Error ? err.message : 'Could not export your data.'
+      );
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -298,10 +362,25 @@ export default function ProfileScreen() {
               />
             </Card>
 
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Import data</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Data</Text>
             <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-              One-time import from a Napper CSV export. Safe to re-run — duplicates are skipped.
+              Export all logs as CSV (Napper-compatible). Import from a Napper export — safe to
+              re-run, duplicates are skipped.
             </Text>
+            {exportSummary && exportSummary.total > 0 ? (
+              <Text style={[styles.exportSummary, { color: colors.textSecondary }]}>
+                {exportSummary.total} events ready · {exportSummary.sleep} sleep ·{' '}
+                {exportSummary.feedings} feeds · {exportSummary.diapers} diapers ·{' '}
+                {exportSummary.wakes} wakes
+              </Text>
+            ) : null}
+            <BigButton
+              title={exporting ? 'Exporting…' : 'Export CSV'}
+              onPress={handleExport}
+              loading={exporting}
+              disabled={exporting || !exportSummary?.total}
+              style={{ marginBottom: spacing.sm }}
+            />
             <BigButton
               title="Import from Napper"
               variant="secondary"
@@ -343,6 +422,7 @@ const styles = StyleSheet.create({
   infoCard: { marginBottom: spacing.lg },
   sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: spacing.xs },
   importHint: { fontSize: 14, lineHeight: 20, marginBottom: spacing.md },
+  exportSummary: { fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
   label: { fontSize: 14, fontWeight: '500', marginBottom: spacing.xs },
   input: {
     fontSize: 18,

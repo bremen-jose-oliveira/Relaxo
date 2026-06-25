@@ -23,6 +23,7 @@ import {
   useMorningWakeToday,
 } from '@/store/useAppStore';
 import { getOngoingPause } from '@/lib/sleepPauses';
+import { SleepTimer } from '@/components/SleepTimer';
 import { formatNapScheduleLabel } from '@/lib/napSchedule';
 import { formatTime } from '@/lib/dateUtils';
 import { useRouter } from 'expo-router';
@@ -138,13 +139,17 @@ export default function HomeScreen() {
 
             {ongoing && (
               <Card style={styles.heroCard}>
-                <Text style={[styles.predictionLabel, { color: colors.textSecondary }]}>
-                  {isPaused ? 'Sleep paused' : 'Currently sleeping'}
-                </Text>
-                <Text style={[styles.asleepHint, { color: colors.text }]}>
+                <SleepTimer
+                  sleepEventId={ongoing.id}
+                  startTime={ongoing.startTime}
+                  pauses={sleepPauses}
+                  type={ongoing.type}
+                  paused={isPaused}
+                />
+                <Text style={[styles.asleepHint, { color: colors.textSecondary }]}>
                   {isPaused
                     ? 'Tap Resume when baby is back asleep'
-                    : `Prediction updates when ${baby.name} wakes up`}
+                    : `Started at ${formatTime(new Date(ongoing.startTime))}`}
                 </Text>
               </Card>
             )}

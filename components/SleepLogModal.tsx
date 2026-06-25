@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Modal, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, spacing, touchTarget } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
-import { DatePickerField } from '@/components/DatePickerField';
+import { DateTimePickerField } from '@/components/DateTimePickerField';
 import type { SleepEvent } from '@/types';
 
 type Props = {
@@ -46,6 +46,7 @@ export function SleepLogModal({ visible, initial, babyId, onSave, onClose }: Pro
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <Text style={[styles.title, { color: colors.text }]}>
           {initial ? 'Edit sleep' : 'Log sleep'}
         </Text>
@@ -74,7 +75,7 @@ export function SleepLogModal({ visible, initial, babyId, onSave, onClose }: Pro
           ))}
         </View>
 
-        <DatePickerField
+        <DateTimePickerField
           label="Start"
           value={startTime}
           onChange={setStartTime}
@@ -97,12 +98,13 @@ export function SleepLogModal({ visible, initial, babyId, onSave, onClose }: Pro
         </Pressable>
 
         {!ongoing && (
-          <DatePickerField
+          <DateTimePickerField
             label="End"
             value={endTime}
             onChange={setEndTime}
             minimumDate={startTime}
             maximumDate={new Date()}
+            style={{ marginTop: spacing.sm }}
           />
         )}
 
@@ -114,13 +116,15 @@ export function SleepLogModal({ visible, initial, babyId, onSave, onClose }: Pro
             style={{ flex: 1, marginLeft: spacing.sm }}
           />
         </View>
+        </ScrollView>
       </SafeAreaView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: spacing.lg },
+  container: { flex: 1 },
+  scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
   title: { fontSize: 24, fontWeight: '700', marginBottom: spacing.lg },
   chips: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
   chip: {

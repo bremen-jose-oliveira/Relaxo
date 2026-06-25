@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, spacing, touchTarget } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
-import { DatePickerField } from '@/components/DatePickerField';
+import { DateTimePickerField } from '@/components/DateTimePickerField';
 import { useAppStore, useOngoingFeeding } from '@/store/useAppStore';
 import { formatTime } from '@/lib/dateUtils';
 import type { FeedingEvent } from '@/types';
@@ -144,11 +144,12 @@ export function FeedingLogModal({ visible, initial, babyId, onClose }: Props) {
                 colors={colors}
               />
             )}
-            <DatePickerField label="Start" value={startTime} onChange={setStartTime} maximumDate={new Date()} />
-            <DatePickerField
+            <DateTimePickerField label="Start" value={startTime} onChange={setStartTime} maximumDate={new Date()} />
+            <DateTimePickerField
               label="End"
               value={endTime}
               onChange={setEndTime}
+              minimumDate={startTime}
               maximumDate={new Date()}
               style={{ marginTop: spacing.md }}
             />
