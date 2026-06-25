@@ -1,0 +1,1 @@
+ALTER TABLE `wake_events` ADD `end_time` text;

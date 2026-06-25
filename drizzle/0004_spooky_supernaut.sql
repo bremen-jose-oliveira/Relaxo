@@ -1,0 +1,1 @@
+ALTER TABLE `babies` ADD `nap_goal` integer DEFAULT 3 NOT NULL;
