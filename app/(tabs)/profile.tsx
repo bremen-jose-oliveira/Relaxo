@@ -7,6 +7,7 @@ import {
   Alert,
   ScrollView,
   Pressable,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -17,7 +18,7 @@ import { BigButton } from '@/components/BigButton';
 import { Card, InfoRow } from '@/components/Card';
 import { DatePickerField } from '@/components/DatePickerField';
 import { ImportPreviewModal } from '@/components/ImportPreviewModal';
-import type { NapGoal } from '@/types';
+import type { AppLocale, NapGoal } from '@/types';
 import { ageInWeeks, formatDateKey } from '@/lib/dateUtils';
 import { getAgeWakeWindowRange } from '@/lib/predictNextSleep';
 import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
@@ -35,6 +36,14 @@ import {
   getExportSummary,
 } from '@/lib/exportCareData';
 import { shareCsvFile } from '@/lib/shareCsvFile';
+import { useTranslation } from '@/lib/i18n';
+import {
+  checkAndDownloadUpdate,
+  formatUpdateId,
+  getAppVersionInfo,
+  openLatestBuildInstall,
+  reloadWithLatestUpdate,
+} from '@/lib/appUpdates';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 
 const ROUTINE_NAP_OPTIONS: NapGoal[] = [2, 3, 4];
@@ -44,11 +53,15 @@ export default function ProfileScreen() {
   const colors = Colors[scheme];
 
   const saveBaby = useAppStore((s) => s.saveBaby);
+  const setLocale = useAppStore((s) => s.setLocale);
+  const locale = useAppStore((s) => s.locale);
+  const t = useTranslation(locale);
   const importCareEvents = useAppStore((s) => s.importCareEvents);
   const events = useAppStore((s) => s.events);
   const sleepPauses = useAppStore((s) => s.sleepPauses);
   const feedings = useAppStore((s) => s.feedings);
   const diapers = useAppStore((s) => s.diapers);
+  const baths = useAppStore((s) => s.baths);
   const wakes = useAppStore((s) => s.wakes);
   const baby = useActiveBaby();
 
@@ -60,6 +73,13 @@ export default function ProfileScreen() {
     baby?.napGoal == null ? 'auto' : 'routine'
   );
   const [routineNaps, setRoutineNaps] = useState<NapGoal>(baby?.napGoal ?? 3);
+  const [trackFeedingDuration, setTrackFeedingDuration] = useState(
+    baby?.trackFeedingDuration ?? false
+  );
+  const [easilyOverstimulated, setEasilyOverstimulated] = useState(
+    baby?.easilyOverstimulated ?? false
+  );
+  const [highNeed, setHighNeed] = useState(baby?.highNeed ?? false);
   const [saving, setSaving] = useState(false);
 
   const [importModalVisible, setImportModalVisible] = useState(false);
@@ -69,6 +89,10 @@ export default function ProfileScreen() {
   const [manualMapping, setManualMapping] = useState<Partial<ColumnMapping>>({});
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [openingBuilds, setOpeningBuilds] = useState(false);
+
+  const versionInfo = useMemo(() => getAppVersionInfo(), []);
 
   useEffect(() => {
     if (baby) {
@@ -76,6 +100,9 @@ export default function ProfileScreen() {
       setBirthDate(new Date(baby.birthDate + 'T00:00:00'));
       setScheduleMode(baby.napGoal == null ? 'auto' : 'routine');
       setRoutineNaps(baby.napGoal ?? 3);
+      setTrackFeedingDuration(baby.trackFeedingDuration ?? false);
+      setEasilyOverstimulated(baby.easilyOverstimulated ?? false);
+      setHighNeed(baby.highNeed ?? false);
     }
   }, [baby]);
 
@@ -98,7 +125,7 @@ export default function ProfileScreen() {
 
   const handleSave = async () => {
     if (!name.trim()) {
-      Alert.alert('Name required', "Please enter your baby's name.");
+      Alert.alert(t('profile.nameRequired'), t('profile.nameRequiredMsg'));
       return;
     }
 
@@ -110,8 +137,11 @@ export default function ProfileScreen() {
         name: name.trim(),
         birthDate: dateStr,
         napGoal: scheduleMode === 'auto' ? null : routineNaps,
+        trackFeedingDuration,
+        easilyOverstimulated,
+        highNeed,
       });
-      Alert.alert('Saved', 'Baby profile updated.');
+      Alert.alert(t('profile.saved'), t('profile.savedMsg'));
     } finally {
       setSaving(false);
     }
@@ -125,13 +155,14 @@ export default function ProfileScreen() {
       sleepPauses,
       feedings,
       diapers,
+      baths,
       wakes,
     });
-  }, [baby, events, sleepPauses, feedings, diapers, wakes]);
+  }, [baby, events, sleepPauses, feedings, diapers, baths, wakes]);
 
   const handleExport = async () => {
     if (!baby) {
-      Alert.alert('Profile required', 'Create a baby profile before exporting.');
+      Alert.alert(t('alerts.profileRequired'), t('alerts.profileRequiredExport'));
       return;
     }
 
@@ -141,11 +172,12 @@ export default function ProfileScreen() {
       sleepPauses,
       feedings,
       diapers,
+      baths,
       wakes,
     });
 
     if (summary.total === 0) {
-      Alert.alert('Nothing to export', 'Log some sleep, feeds, or diapers first.');
+      Alert.alert(t('alerts.nothingToExport'), t('alerts.nothingToExportMsg'));
       return;
     }
 
@@ -157,21 +189,22 @@ export default function ProfileScreen() {
         sleepPauses,
         feedings,
         diapers,
+        baths,
         wakes,
       });
       const filename = buildExportFilename(baby.name);
       await shareCsvFile(csv, filename);
     } catch (err) {
       Alert.alert(
-        'Export failed',
-        err instanceof Error ? err.message : 'Could not export your data.'
+        t('alerts.exportFailed'),
+        err instanceof Error ? err.message : t('alerts.exportFailed')
       );
     } finally {
       setExporting(false);
     }
   };
 
-  const handleImportFromNapper = async () => {
+  const handleImportData = async () => {
     if (!baby) {
       Alert.alert('Profile required', 'Create a baby profile before importing.');
       return;
@@ -220,7 +253,7 @@ export default function ProfileScreen() {
 
       Alert.alert(
         'Import complete',
-        `${result.sleepAdded} sleep, ${result.feedingAdded} feeding, ${result.diaperAdded} diaper, ${result.wakeAdded} wake added. ${result.duplicatesSkipped} duplicates skipped, ${result.failedSkipped} rows skipped.`
+        `${result.sleepAdded} sleep, ${result.feedingAdded} feeding, ${result.diaperAdded} diaper, ${result.bathAdded} bath, ${result.wakeAdded} wake added. ${result.duplicatesSkipped} duplicates skipped, ${result.failedSkipped} rows skipped.`
       );
     } catch (err) {
       Alert.alert(
@@ -235,6 +268,52 @@ export default function ProfileScreen() {
   const handleCloseImport = () => {
     setImportModalVisible(false);
     resetImportState();
+  };
+
+  const handleCheckUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      const outcome = await checkAndDownloadUpdate();
+      if (outcome.status === 'unsupported') {
+        Alert.alert(t('alerts.updatesUnsupported'), t('alerts.updatesUnsupportedMsg'));
+        return;
+      }
+      if (outcome.status === 'up_to_date') {
+        Alert.alert(t('alerts.updatesUpToDate'), t('alerts.updatesUpToDateMsg'));
+        return;
+      }
+      if (outcome.status === 'error') {
+        Alert.alert(t('alerts.updatesFailed'), outcome.message);
+        return;
+      }
+      Alert.alert(t('alerts.updatesDownloaded'), t('alerts.updatesDownloadedMsg'), [
+        { text: t('alerts.updatesLater'), style: 'cancel' },
+        {
+          text: t('alerts.updatesRestart'),
+          onPress: () => {
+            void reloadWithLatestUpdate();
+          },
+        },
+      ]);
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
+  const handleOpenBuilds = async () => {
+    setOpeningBuilds(true);
+    try {
+      const outcome = await openLatestBuildInstall();
+      if (outcome.status === 'no_build') {
+        Alert.alert(t('alerts.noPreviewBuild'), t('alerts.noPreviewBuildMsg'));
+        return;
+      }
+      if (outcome.status === 'error') {
+        Alert.alert(t('alerts.updatesFailed'), outcome.message);
+      }
+    } finally {
+      setOpeningBuilds(false);
+    }
   };
 
   const weeks = ageInWeeks(formatDateKey(birthDate), new Date());
@@ -273,8 +352,7 @@ export default function ProfileScreen() {
             Sleep schedule
           </Text>
           <Text style={[styles.napGoalHint, { color: colors.textSecondary }]}>
-            Like Napper: automatic learns from your logs. Set a routine only if you want a fixed
-            nap count.
+            {t('profile.routineHint')}
           </Text>
           <View style={styles.modeRow}>
             {(
@@ -338,9 +416,132 @@ export default function ProfileScreen() {
 
           {resolvedSchedule && (
             <Text style={[styles.previewSchedule, { color: colors.textSecondary }]}>
-              Predictions use: {formatNapScheduleLabel(resolvedSchedule)}
+              {t('profile.predictionsUse', {
+                label: formatNapScheduleLabel(resolvedSchedule),
+              })}
             </Text>
           )}
+
+          <View style={[styles.toggleRow, { borderColor: colors.border }]}>
+            <View style={styles.toggleText}>
+              <Text style={[styles.label, { color: colors.text, marginBottom: 4 }]}>
+                {t('profile.trackDuration')}
+              </Text>
+              <Text style={[styles.napGoalHint, { color: colors.textSecondary, marginBottom: 0 }]}>
+                {t('profile.trackDurationHint')}
+              </Text>
+            </View>
+            <Switch
+              value={trackFeedingDuration}
+              onValueChange={setTrackFeedingDuration}
+              trackColor={{ false: colors.border, true: colors.feeding }}
+            />
+          </View>
+
+          <Text style={[styles.label, { color: colors.textSecondary, marginTop: spacing.lg }]}>
+            {t('profile.temperament')}
+          </Text>
+          <Text style={[styles.napGoalHint, { color: colors.textSecondary }]}>
+            {t('profile.temperamentHint')}
+          </Text>
+
+          <View style={[styles.toggleRow, { borderColor: colors.border }]}>
+            <View style={styles.toggleText}>
+              <Text style={[styles.label, { color: colors.text, marginBottom: 4 }]}>
+                {t('profile.easilyOverstimulated')}
+              </Text>
+              <Text style={[styles.napGoalHint, { color: colors.textSecondary, marginBottom: 0 }]}>
+                {t('profile.easilyOverstimulatedHint')}
+              </Text>
+            </View>
+            <Switch
+              value={easilyOverstimulated}
+              onValueChange={setEasilyOverstimulated}
+              trackColor={{ false: colors.border, true: colors.tint }}
+            />
+          </View>
+
+          <View style={[styles.toggleRow, { borderColor: colors.border }]}>
+            <View style={styles.toggleText}>
+              <Text style={[styles.label, { color: colors.text, marginBottom: 4 }]}>
+                {t('profile.highNeed')}
+              </Text>
+              <Text style={[styles.napGoalHint, { color: colors.textSecondary, marginBottom: 0 }]}>
+                {t('profile.highNeedHint')}
+              </Text>
+            </View>
+            <Switch
+              value={highNeed}
+              onValueChange={setHighNeed}
+              trackColor={{ false: colors.border, true: colors.tint }}
+            />
+          </View>
+
+          <Text style={[styles.label, { color: colors.textSecondary, marginTop: spacing.lg }]}>
+            {t('profile.language')}
+          </Text>
+          <View style={styles.modeRow}>
+            {(
+              [
+                ['system', t('profile.langSystem')],
+                ['en', t('profile.langEn')],
+                ['de', t('profile.langDe')],
+              ] as const
+            ).map(([code, label]) => (
+              <Pressable
+                key={code}
+                onPress={() => setLocale(code as AppLocale)}
+                style={[
+                  styles.modeChip,
+                  {
+                    backgroundColor: locale === code ? colors.tint : colors.card,
+                    borderColor: colors.border,
+                  },
+                ]}>
+                <Text
+                  style={{
+                    color: locale === code ? '#FFF' : colors.text,
+                    fontWeight: '700',
+                    fontSize: 13,
+                  }}>
+                  {label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </Card>
+
+        <Card style={styles.formCard}>
+          <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: spacing.sm }]}>
+            {t('profile.app')}
+          </Text>
+          <InfoRow label={t('profile.appVersion')} value={versionInfo.appVersion} />
+          {versionInfo.runtimeVersion ? (
+            <InfoRow label={t('profile.runtimeVersion')} value={versionInfo.runtimeVersion} />
+          ) : null}
+          {versionInfo.channel ? (
+            <InfoRow label={t('profile.updateChannel')} value={versionInfo.channel} />
+          ) : null}
+          {formatUpdateId(versionInfo.updateId) ? (
+            <InfoRow label={t('profile.updateId')} value={formatUpdateId(versionInfo.updateId)!} />
+          ) : null}
+          <Text style={[styles.importHint, { color: colors.textSecondary, marginTop: spacing.sm }]}>
+            {t('profile.downloadBuildHint')}
+          </Text>
+          <BigButton
+            title={checkingUpdates ? t('profile.checkingUpdates') : t('profile.checkUpdates')}
+            onPress={handleCheckUpdates}
+            loading={checkingUpdates}
+            disabled={checkingUpdates}
+            style={{ marginTop: spacing.sm, marginBottom: spacing.sm }}
+          />
+          <BigButton
+            title={t('profile.downloadBuild')}
+            variant="secondary"
+            onPress={handleOpenBuilds}
+            loading={openingBuilds}
+            disabled={openingBuilds}
+          />
         </Card>
 
         {baby && (
@@ -362,36 +563,40 @@ export default function ProfileScreen() {
               />
             </Card>
 
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Data</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.data')}</Text>
             <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-              Export all logs as CSV (Napper-compatible). Import from a Napper export — safe to
-              re-run, duplicates are skipped.
+              {t('profile.dataHint')}
             </Text>
             {exportSummary && exportSummary.total > 0 ? (
               <Text style={[styles.exportSummary, { color: colors.textSecondary }]}>
-                {exportSummary.total} events ready · {exportSummary.sleep} sleep ·{' '}
-                {exportSummary.feedings} feeds · {exportSummary.diapers} diapers ·{' '}
-                {exportSummary.wakes} wakes
+                {t('profile.exportReady', {
+                  total: exportSummary.total,
+                  sleep: exportSummary.sleep,
+                  feeds: exportSummary.feedings,
+                  diapers: exportSummary.diapers,
+                  baths: exportSummary.baths,
+                  wakes: exportSummary.wakes,
+                })}
               </Text>
             ) : null}
             <BigButton
-              title={exporting ? 'Exporting…' : 'Export CSV'}
+              title={exporting ? t('profile.exporting') : t('profile.exportCsv')}
               onPress={handleExport}
               loading={exporting}
               disabled={exporting || !exportSummary?.total}
               style={{ marginBottom: spacing.sm }}
             />
             <BigButton
-              title="Import from Napper"
+              title={t('profile.importData')}
               variant="secondary"
-              onPress={handleImportFromNapper}
+              onPress={handleImportData}
               style={{ marginBottom: spacing.lg }}
             />
           </>
         )}
 
         <BigButton
-          title={baby ? 'Save changes' : 'Create profile'}
+          title={baby ? t('profile.saveChanges') : t('profile.createProfile')}
           onPress={handleSave}
           loading={saving}
         />
@@ -423,6 +628,16 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: spacing.xs },
   importHint: { fontSize: 14, lineHeight: 20, marginBottom: spacing.md },
   exportSummary: { fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    gap: spacing.md,
+  },
+  toggleText: { flex: 1 },
   label: { fontSize: 14, fontWeight: '500', marginBottom: spacing.xs },
   input: {
     fontSize: 18,

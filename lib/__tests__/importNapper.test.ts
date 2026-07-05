@@ -7,6 +7,7 @@ import {
   getImportableEvents,
   parseNapperPauses,
   mapImportRow,
+  stitchNapperBedtimes,
 } from '@/lib/importNapper';
 
 const BABY_ID = 'baby-test';
@@ -147,6 +148,46 @@ describe('importNapper', () => {
       expect(pauses).toHaveLength(1);
       expect(pauses[0].endTime).not.toBeNull();
       expect(parseNapperPauses('[object Object]')).toEqual([]);
+    });
+
+    it('stitches instant BED_TIME markers to the next morning wake', () => {
+      const mapping = { startTime: 'start', endTime: 'end', eventType: 'category' };
+      const bedtime = mapImportRow(
+        {
+          start: '2026-06-18T21:14:21.000+02:00',
+          end: '2026-06-18T21:14:21.000+02:00',
+          category: 'BED_TIME',
+        },
+        1,
+        mapping,
+        BABY_ID,
+        NOW
+      );
+      expect(bedtime.sleepEvent?.endTime).toBe(bedtime.sleepEvent?.startTime);
+
+      const morningWake = mapImportRow(
+        {
+          start: '2026-06-19T09:46:28.000+02:00',
+          end: '2026-06-19T09:46:28.000+02:00',
+          category: 'WOKE_UP',
+        },
+        2,
+        mapping,
+        BABY_ID,
+        NOW
+      );
+
+      const stitched = stitchNapperBedtimes(
+        [bedtime.sleepEvent!],
+        [morningWake.wakeEvent!]
+      );
+      expect(stitched[0].endTime).toBe(morningWake.wakeEvent!.time);
+      const nightMinutes = Math.round(
+        (new Date(stitched[0].endTime!).getTime() - new Date(stitched[0].startTime).getTime()) /
+          60000
+      );
+      expect(nightMinutes).toBeGreaterThan(600);
+      expect(nightMinutes).toBeLessThan(800);
     });
   });
 });

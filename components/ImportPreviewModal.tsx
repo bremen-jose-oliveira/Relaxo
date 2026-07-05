@@ -39,6 +39,7 @@ function importableCount(preview: ImportPreview): number {
     preview.feedingReadyCount +
     preview.feedingOngoingCount +
     preview.diaperReadyCount +
+    preview.bathReadyCount +
     preview.wakeReadyCount
   );
 }
@@ -59,6 +60,7 @@ function PreviewTable({ preview }: { preview: ImportPreview }) {
         <SummaryItem label="Sleep" value={String(preview.sleepReadyCount + preview.sleepOngoingCount)} colors={colors} />
         <SummaryItem label="Feeding" value={String(preview.feedingReadyCount + preview.feedingOngoingCount)} colors={colors} />
         <SummaryItem label="Diaper" value={String(preview.diaperReadyCount)} colors={colors} />
+        <SummaryItem label="Bath" value={String(preview.bathReadyCount)} colors={colors} />
         <SummaryItem label="Wake" value={String(preview.wakeReadyCount)} colors={colors} />
         <SummaryItem label="Unrecognized" value={String(preview.skippedUnrecognized)} colors={colors} />
         <SummaryItem label="Failed" value={String(preview.skippedFailed + preview.skippedOpenOld)} colors={colors} />

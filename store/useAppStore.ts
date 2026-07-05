@@ -1,27 +1,39 @@
 import { create } from 'zustand';
 import { newId } from '@/lib/newId';
-import type { Baby, DiaperEvent, FeedingEvent, SleepEvent, SleepPause, WakeEvent } from '@/types';
+import type { Baby, BathEvent, ChoreRecurrence, DailyChore, DiaperEvent, FeedingEvent, SleepEvent, SleepPause, WakeEvent, AppLocale } from '@/types';
 import {
+  bulkInsertBathEvents,
   bulkInsertDiaperEvents,
   bulkInsertFeedingEvents,
   bulkInsertSleepEvents,
   bulkInsertSleepPauses,
   bulkInsertWakeEvents,
+  deleteBathEvent,
+  deleteDailyChore,
   deleteDiaperEvent,
   deleteFeedingEvent,
   deleteSleepEvent,
   deleteWakeEvent,
   getAllBabies,
+  getBathEventsForBaby,
+  getDailyChoreCompletionsForDate,
+  getDailyChoresForBaby,
   getDiaperEventsForBaby,
   getFeedingEventsForBaby,
   getSleepEventsForBaby,
   getSleepPausesForBaby,
   getWakeEventsForBaby,
+  getAppLocale,
+  setAppLocale,
+  insertBathEvent,
+  insertDailyChore,
   insertDiaperEvent,
   insertFeedingEvent,
   insertSleepEvent,
   insertSleepPause,
   insertWakeEvent,
+  setDailyChoreCompleted,
+  updateBathEvent,
   updateDiaperEvent,
   updateFeedingEvent,
   updateSleepEvent,
@@ -36,8 +48,9 @@ import {
 } from '@/lib/predictNextSleep';
 import { getMorningWakeForDay } from '@/lib/dayAnchor';
 import { getImportableEvents, type ImportPreview } from '@/lib/importNapper';
-import { isOngoingFeeding } from '@/lib/timeline';
+import { isOngoingFeeding } from '@/lib/feedingUtils';
 import { getOngoingPause, isSleepPaused } from '@/lib/sleepPauses';
+import { formatDateKey } from '@/lib/dateUtils';
 import {
   cancelSleepReminder,
   scheduleSleepReminder,
@@ -51,20 +64,24 @@ type AppState = {
   sleepPauses: SleepPause[];
   feedings: FeedingEvent[];
   diapers: DiaperEvent[];
+  baths: BathEvent[];
   wakes: WakeEvent[];
+  dailyChores: DailyChore[];
+  completedChoreIdsToday: string[];
   prediction: PredictResult | null;
   isLoading: boolean;
   isInitialized: boolean;
+  locale: AppLocale;
 
   initialize: () => Promise<void>;
   setActiveBaby: (id: string) => Promise<void>;
-  saveBaby: (baby: Omit<Baby, 'id'> & { id?: string; napGoal?: Baby['napGoal'] }) => Promise<Baby>;
+  saveBaby: (baby: Omit<Baby, 'id'> & { id?: string; napGoal?: Baby['napGoal']; trackFeedingDuration?: boolean }) => Promise<Baby>;
+  setLocale: (locale: AppLocale) => Promise<void>;
   refreshEvents: () => Promise<void>;
   startSleep: (type: 'nap' | 'night') => Promise<void>;
   endSleep: () => Promise<void>;
   pauseSleep: () => Promise<void>;
   resumeSleep: () => Promise<void>;
-  startDay: () => Promise<void>;
   addSleepEvent: (event: Omit<SleepEvent, 'id'>) => Promise<SleepEvent>;
   editSleepEvent: (event: SleepEvent) => Promise<void>;
   removeSleepEvent: (id: string) => Promise<void>;
@@ -76,14 +93,22 @@ type AppState = {
   addDiaper: (event: Omit<DiaperEvent, 'id'>) => Promise<DiaperEvent>;
   editDiaper: (event: DiaperEvent) => Promise<void>;
   removeDiaper: (id: string) => Promise<void>;
+  addBath: (event: Omit<BathEvent, 'id'>) => Promise<BathEvent>;
+  editBath: (event: BathEvent) => Promise<void>;
+  removeBath: (id: string) => Promise<void>;
   addWake: (event: Omit<WakeEvent, 'id'>) => Promise<WakeEvent>;
   editWake: (event: WakeEvent) => Promise<void>;
   removeWake: (id: string) => Promise<void>;
+  refreshChores: () => Promise<void>;
+  addDailyChore: (title: string, recurrence?: ChoreRecurrence) => Promise<void>;
+  toggleDailyChore: (choreId: string, completed: boolean) => Promise<void>;
+  removeDailyChore: (id: string) => Promise<void>;
   recomputePrediction: () => Promise<void>;
   importCareEvents: (preview: ImportPreview) => Promise<{
     sleepAdded: number;
     feedingAdded: number;
     diaperAdded: number;
+    bathAdded: number;
     wakeAdded: number;
     duplicatesSkipped: number;
     failedSkipped: number;
@@ -97,30 +122,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   sleepPauses: [],
   feedings: [],
   diapers: [],
+  baths: [],
   wakes: [],
+  dailyChores: [],
+  completedChoreIdsToday: [],
   prediction: null,
   isLoading: true,
   isInitialized: false,
+  locale: 'system',
 
   initialize: async () => {
     await setupNotificationChannel();
-    const babies = await getAllBabies();
+    const [babies, locale] = await Promise.all([getAllBabies(), getAppLocale()]);
     const activeBabyId = babies[0]?.id ?? null;
-    set({ babies, activeBabyId, isLoading: false, isInitialized: true });
+    set({ babies, locale, activeBabyId, isLoading: false, isInitialized: true });
     if (activeBabyId) await get().setActiveBaby(activeBabyId);
   },
 
   setActiveBaby: async (id: string) => {
     set({ activeBabyId: id, isLoading: true });
-    const [events, sleepPauses, feedings, diapers, wakes] = await Promise.all([
+    const [events, sleepPauses, feedings, diapers, baths, wakes] = await Promise.all([
       getSleepEventsForBaby(id),
       getSleepPausesForBaby(id),
       getFeedingEventsForBaby(id),
       getDiaperEventsForBaby(id),
+      getBathEventsForBaby(id),
       getWakeEventsForBaby(id),
     ]);
-    set({ events, sleepPauses, feedings, diapers, wakes, isLoading: false });
-    await get().recomputePrediction();
+    set({ events, sleepPauses, feedings, diapers, baths, wakes, isLoading: false });
+    await Promise.all([get().recomputePrediction(), get().refreshChores()]);
   },
 
   saveBaby: async (input) => {
@@ -129,6 +159,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       name: input.name,
       birthDate: input.birthDate,
       napGoal: input.napGoal ?? null,
+      trackFeedingDuration: input.trackFeedingDuration ?? false,
+      easilyOverstimulated: input.easilyOverstimulated ?? false,
+      highNeed: input.highNeed ?? false,
     };
     await upsertBaby(baby);
     const babies = await getAllBabies();
@@ -140,17 +173,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     return baby;
   },
 
+  setLocale: async (locale) => {
+    await setAppLocale(locale);
+    set({ locale });
+  },
+
   refreshEvents: async () => {
     const { activeBabyId } = get();
     if (!activeBabyId) return;
-    const [events, sleepPauses, feedings, diapers, wakes] = await Promise.all([
+    const [events, sleepPauses, feedings, diapers, baths, wakes] = await Promise.all([
       getSleepEventsForBaby(activeBabyId),
       getSleepPausesForBaby(activeBabyId),
       getFeedingEventsForBaby(activeBabyId),
       getDiaperEventsForBaby(activeBabyId),
+      getBathEventsForBaby(activeBabyId),
       getWakeEventsForBaby(activeBabyId),
     ]);
-    set({ events, sleepPauses, feedings, diapers, wakes });
+    set({ events, sleepPauses, feedings, diapers, baths, wakes });
     await get().recomputePrediction();
   },
 
@@ -169,13 +208,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   endSleep: async () => {
-    const ongoing = isCurrentlyAsleep(get().events);
-    if (!ongoing) return;
+    const { activeBabyId, events } = get();
+    const ongoing = isCurrentlyAsleep(events);
+    if (!ongoing || !activeBabyId) return;
     const openPause = getOngoingPause(get().sleepPauses, ongoing.id);
     if (openPause) {
       await updateSleepPause({ ...openPause, endTime: new Date().toISOString() });
     }
-    await updateSleepEvent({ ...ongoing, endTime: new Date().toISOString() });
+    const endTime = new Date().toISOString();
+    await updateSleepEvent({ ...ongoing, endTime });
     await get().refreshEvents();
   },
 
@@ -197,21 +238,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const openPause = getOngoingPause(get().sleepPauses, ongoing?.id);
     if (!ongoing || !openPause) return;
     await updateSleepPause({ ...openPause, endTime: new Date().toISOString() });
-    await get().refreshEvents();
-  },
-
-  startDay: async () => {
-    const { activeBabyId } = get();
-    if (!activeBabyId) return;
-    const wake: WakeEvent = {
-      id: newId(),
-      babyId: activeBabyId,
-      time: new Date().toISOString(),
-      endTime: null,
-      wakeType: 'morning',
-      notes: null,
-    };
-    await insertWakeEvent(wake);
     await get().refreshEvents();
   },
 
@@ -291,6 +317,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().refreshEvents();
   },
 
+  addBath: async (input) => {
+    const event: BathEvent = { ...input, id: newId() };
+    await insertBathEvent(event);
+    await get().refreshEvents();
+    return event;
+  },
+
+  editBath: async (event) => {
+    await updateBathEvent(event);
+    await get().refreshEvents();
+  },
+
+  removeBath: async (id) => {
+    await deleteBathEvent(id);
+    await get().refreshEvents();
+  },
+
   addWake: async (input) => {
     const event: WakeEvent = { ...input, id: newId() };
     await insertWakeEvent(event);
@@ -306,6 +349,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeWake: async (id) => {
     await deleteWakeEvent(id);
     await get().refreshEvents();
+  },
+
+  refreshChores: async () => {
+    const { activeBabyId } = get();
+    if (!activeBabyId) {
+      set({ dailyChores: [], completedChoreIdsToday: [] });
+      return;
+    }
+    const dateKey = formatDateKey(new Date());
+    const [dailyChores, completions] = await Promise.all([
+      getDailyChoresForBaby(activeBabyId),
+      getDailyChoreCompletionsForDate(activeBabyId, dateKey),
+    ]);
+    set({
+      dailyChores,
+      completedChoreIdsToday: completions.map((c) => c.choreId),
+    });
+  },
+
+  addDailyChore: async (title, recurrence = 'daily') => {
+    const { activeBabyId, dailyChores } = get();
+    if (!activeBabyId || !title.trim()) return;
+    await insertDailyChore({
+      babyId: activeBabyId,
+      title: title.trim(),
+      sortOrder: dailyChores.length,
+      createdAt: new Date().toISOString(),
+      recurrence,
+    });
+    await get().refreshChores();
+  },
+
+  toggleDailyChore: async (choreId, completed) => {
+    const dateKey = formatDateKey(new Date());
+    await setDailyChoreCompleted(choreId, dateKey, completed);
+    await get().refreshChores();
+  },
+
+  removeDailyChore: async (id) => {
+    await deleteDailyChore(id);
+    await get().refreshChores();
   },
 
   recomputePrediction: async () => {
@@ -337,17 +421,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         sleepAdded: 0,
         feedingAdded: 0,
         diaperAdded: 0,
+        bathAdded: 0,
         wakeAdded: 0,
         duplicatesSkipped: 0,
         failedSkipped: preview.totalRows,
       };
     }
 
-    const { sleep, feedings, diapers, wakes, sleepPauses } = getImportableEvents(preview);
+    const { sleep, feedings, diapers, baths, wakes, sleepPauses } = getImportableEvents(preview);
     const sleepResult = await bulkInsertSleepEvents(sleep, activeBabyId);
-    const [feedingResult, diaperResult, wakeResult] = await Promise.all([
+    const [feedingResult, diaperResult, bathResult, wakeResult] = await Promise.all([
       bulkInsertFeedingEvents(feedings, activeBabyId),
       bulkInsertDiaperEvents(diapers, activeBabyId),
+      bulkInsertBathEvents(baths, activeBabyId),
       bulkInsertWakeEvents(wakes, activeBabyId),
     ]);
 
@@ -381,11 +467,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       sleepAdded: sleepResult.added,
       feedingAdded: feedingResult.added,
       diaperAdded: diaperResult.added,
+      bathAdded: bathResult.added,
       wakeAdded: wakeResult.added,
       duplicatesSkipped:
         sleepResult.duplicatesSkipped +
         feedingResult.duplicatesSkipped +
         diaperResult.duplicatesSkipped +
+        bathResult.duplicatesSkipped +
         wakeResult.duplicatesSkipped,
       failedSkipped: preview.skippedFailed + preview.skippedOpenOld + preview.skippedUnrecognized,
     };

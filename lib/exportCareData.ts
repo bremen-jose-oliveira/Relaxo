@@ -1,6 +1,7 @@
 import Papa from 'papaparse';
 import type {
   Baby,
+  BathEvent,
   DiaperEvent,
   FeedingEvent,
   SleepEvent,
@@ -24,6 +25,7 @@ export type ExportCareInput = {
   sleepPauses: SleepPause[];
   feedings: FeedingEvent[];
   diapers: DiaperEvent[];
+  baths: BathEvent[];
   wakes: WakeEvent[];
 };
 
@@ -31,6 +33,7 @@ export type ExportSummary = {
   sleep: number;
   feedings: number;
   diapers: number;
+  baths: number;
   wakes: number;
   total: number;
 };
@@ -140,6 +143,13 @@ export function buildExportRows(input: ExportCareInput): ExportRow[] {
     });
   }
 
+  for (const event of input.baths) {
+    rows.push({
+      sortTime: event.time,
+      data: row(event.time, 'Bath', '', event.notes ?? ''),
+    });
+  }
+
   for (const event of input.wakes) {
     rows.push({
       sortTime: event.time,
@@ -160,11 +170,13 @@ export function getExportSummary(input: ExportCareInput): ExportSummary {
     sleep: input.events.length,
     feedings: input.feedings.length,
     diapers: input.diapers.length,
+    baths: input.baths.length,
     wakes: input.wakes.length,
     total:
       input.events.length +
       input.feedings.length +
       input.diapers.length +
+      input.baths.length +
       input.wakes.length,
   };
 }

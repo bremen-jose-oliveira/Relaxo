@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="Relaxo">
+  <defs>
+    <linearGradient id="sky" x1="96" y1="64" x2="416" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9BB5CE"/>
+      <stop offset="1" stop-color="#7C9A92"/>
+    </linearGradient>
+    <linearGradient id="moon" x1="176" y1="120" x2="352" y2="296" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F8F6F3"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded app tile -->
+  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
+  <!-- Soft cloud -->
+  <path
+    d="M128 332c0-34 24-62 56-68 8-44 48-76 96-76 38 0 72 20 90 50 34 4 62 32 62 68 0 37-30 68-68 68H160c-38 0-32-22-32-42z"
+    fill="#F8F6F3"
+    opacity="0.92"/>
+  <!-- Crescent moon -->
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M292 148c-62 8-108 62-108 126 0 71 57 128 128 128 24 0 46-7 65-18-78-14-136-82-136-164 0-28 7-54 19-76 12-22 18-4 32 4z"
+    fill="url(#moon)"/>
+  <!-- Small stars -->
+  <circle cx="148" cy="168" r="8" fill="#F8F6F3" opacity="0.9"/>
+  <circle cx="196" cy="120" r="5" fill="#F8F6F3" opacity="0.75"/>
+  <circle cx="372" cy="156" r="6" fill="#F8F6F3" opacity="0.8"/>
+  <!-- Gentle wave (calm / relax) -->
+  <path
+    d="M96 392c48-18 96-18 144 0s96 18 144 0 96-18 144 0v56H96v-56z"
+    fill="#5A7A72"
+    opacity="0.35"/>
+</svg>

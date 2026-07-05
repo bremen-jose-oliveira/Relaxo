@@ -1,17 +1,19 @@
 import type {
+  BathEvent,
   DiaperEvent,
   FeedingEvent,
   SleepEvent,
   TimelineItem,
   WakeEvent,
 } from '@/types';
-import { getWakeDayBounds } from '@/lib/dayAnchor';
+import { getWakeDayBounds, getDayViewBounds } from '@/lib/dayAnchor';
 import { formatDateKey, isSameDay } from '@/lib/dateUtils';
 
 export function buildTimeline(
   sleep: SleepEvent[],
   feedings: FeedingEvent[],
   diapers: DiaperEvent[],
+  baths: BathEvent[],
   wakes: WakeEvent[] = []
 ): TimelineItem[] {
   const items: TimelineItem[] = [
@@ -33,6 +35,12 @@ export function buildTimeline(
       sortTime: data.time,
       data,
     })),
+    ...baths.map((data) => ({
+      kind: 'bath' as const,
+      id: data.id,
+      sortTime: data.time,
+      data,
+    })),
     ...wakes.map((data) => ({
       kind: 'wake' as const,
       id: data.id,
@@ -50,7 +58,7 @@ export function filterTimelineForDay(items: TimelineItem[], day: Date): Timeline
   return items.filter((item) => isSameDay(new Date(item.sortTime), day));
 }
 
-/** Filter timeline to a wake-day cycle (not calendar midnight). */
+/** Filter timeline to a calendar day (midnight → midnight). */
 export function filterTimelineForWakeDay(
   items: TimelineItem[],
   sleep: SleepEvent[],
@@ -59,6 +67,25 @@ export function filterTimelineForWakeDay(
   now: Date = new Date()
 ): TimelineItem[] {
   const { start, end } = getWakeDayBounds(sleep, wakes, anchorDate, now);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  return items
+    .filter((item) => {
+      const t = new Date(item.sortTime).getTime();
+      return t >= startMs && t < endMs;
+    })
+    .sort((a, b) => new Date(b.sortTime).getTime() - new Date(a.sortTime).getTime());
+}
+
+/** History day view — calendar day (midnight to midnight). */
+export function filterTimelineForDayView(
+  items: TimelineItem[],
+  sleep: SleepEvent[],
+  wakes: WakeEvent[],
+  anchorDate: Date,
+  now: Date = new Date()
+): TimelineItem[] {
+  const { start, end } = getDayViewBounds(sleep, wakes, anchorDate, now);
   const startMs = start.getTime();
   const endMs = end.getTime();
   return items
@@ -97,13 +124,4 @@ export function groupTimelineByDay(
       ),
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
-}
-
-export function isOngoingFeeding(events: FeedingEvent[]): FeedingEvent | null {
-  const sorted = [...events].sort(
-    (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
-  );
-  const latest = sorted[0];
-  if (latest && latest.endTime === null && latest.feedType === 'breast') return latest;
-  return null;
 }

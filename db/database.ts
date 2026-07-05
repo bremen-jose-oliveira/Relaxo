@@ -1,14 +1,20 @@
 import { getDb, schema } from "@/db/client";
 import { newId } from "@/lib/newId";
+import { shouldRemoveChoreOnComplete } from "@/lib/choreRecurrence";
 import type {
   Baby,
+  BathEvent,
+  ChoreRecurrence,
+  DailyChore,
+  DailyChoreCompletion,
   DiaperEvent,
   FeedingEvent,
   SleepEvent,
   SleepPause,
   WakeEvent,
+  AppLocale,
 } from "@/types";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray, and } from "drizzle-orm";
 
 const {
   babies,
@@ -16,7 +22,11 @@ const {
   sleepPauses,
   feedingEvents,
   diaperEvents,
+  bathEvents,
   wakeEvents,
+  appSettings,
+  dailyChores,
+  dailyChoreCompletions,
 } = schema;
 
 // Local-only persistence. No multi-device sync in v1.
@@ -37,6 +47,9 @@ function toBaby(row: typeof babies.$inferSelect): Baby {
     name: row.name,
     birthDate: row.birthDate,
     napGoal: napGoal ?? null,
+    trackFeedingDuration: (row.trackFeedingDuration ?? 0) === 1,
+    easilyOverstimulated: (row.easilyOverstimulated ?? 0) === 1,
+    highNeed: (row.highNeed ?? 0) === 1,
   };
 }
 
@@ -74,6 +87,15 @@ function toDiaperEvent(row: typeof diaperEvents.$inferSelect): DiaperEvent {
     id: row.id,
     babyId: row.babyId,
     diaperType: row.diaperType,
+    time: row.time,
+    notes: row.notes ?? null,
+  };
+}
+
+function toBathEvent(row: typeof bathEvents.$inferSelect): BathEvent {
+  return {
+    id: row.id,
+    babyId: row.babyId,
     time: row.time,
     notes: row.notes ?? null,
   };
@@ -118,10 +140,50 @@ export async function upsertBaby(baby: Baby): Promise<void> {
   const napGoalDb = baby.napGoal ?? NAP_GOAL_AUTO_DB;
   await db
     .insert(babies)
-    .values({ ...baby, napGoal: napGoalDb })
+    .values({
+      id: baby.id,
+      name: baby.name,
+      birthDate: baby.birthDate,
+      napGoal: napGoalDb,
+      trackFeedingDuration: baby.trackFeedingDuration ? 1 : 0,
+      easilyOverstimulated: baby.easilyOverstimulated ? 1 : 0,
+      highNeed: baby.highNeed ? 1 : 0,
+    })
     .onConflictDoUpdate({
       target: babies.id,
-      set: { name: baby.name, birthDate: baby.birthDate, napGoal: napGoalDb },
+      set: {
+        name: baby.name,
+        birthDate: baby.birthDate,
+        napGoal: napGoalDb,
+        trackFeedingDuration: baby.trackFeedingDuration ? 1 : 0,
+        easilyOverstimulated: baby.easilyOverstimulated ? 1 : 0,
+        highNeed: baby.highNeed ? 1 : 0,
+      },
+    });
+}
+
+const DEFAULT_SETTINGS_ID = 'default';
+
+export async function getAppLocale(): Promise<AppLocale> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.id, DEFAULT_SETTINGS_ID))
+    .limit(1);
+  const locale = rows[0]?.locale;
+  if (locale === 'en' || locale === 'de' || locale === 'system') return locale;
+  return 'system';
+}
+
+export async function setAppLocale(locale: AppLocale): Promise<void> {
+  const db = await getDb();
+  await db
+    .insert(appSettings)
+    .values({ id: DEFAULT_SETTINGS_ID, locale })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { locale },
     });
 }
 
@@ -140,6 +202,7 @@ export async function deleteBaby(id: string): Promise<void> {
   await db.delete(sleepEvents).where(eq(sleepEvents.babyId, id));
   await db.delete(feedingEvents).where(eq(feedingEvents.babyId, id));
   await db.delete(diaperEvents).where(eq(diaperEvents.babyId, id));
+  await db.delete(bathEvents).where(eq(bathEvents.babyId, id));
   await db.delete(wakeEvents).where(eq(wakeEvents.babyId, id));
   await db.delete(babies).where(eq(babies.id, id));
 }
@@ -442,6 +505,73 @@ export async function bulkInsertDiaperEvents(
   return { added, duplicatesSkipped };
 }
 
+// ─── BathEvent CRUD ──────────────────────────────────────────────────────────
+
+export async function getBathEventsForBaby(babyId: string): Promise<BathEvent[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(bathEvents)
+    .where(eq(bathEvents.babyId, babyId))
+    .orderBy(desc(bathEvents.time));
+  return rows.map(toBathEvent);
+}
+
+export async function insertBathEvent(event: BathEvent): Promise<void> {
+  const db = await getDb();
+  await db.insert(bathEvents).values(event);
+}
+
+export async function updateBathEvent(event: BathEvent): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(bathEvents)
+    .set({
+      time: event.time,
+      notes: event.notes,
+    })
+    .where(eq(bathEvents.id, event.id));
+}
+
+export async function deleteBathEvent(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(bathEvents).where(eq(bathEvents.id, id));
+}
+
+function isDuplicateBath(
+  candidate: Omit<BathEvent, "id">,
+  existing: BathEvent,
+): boolean {
+  if (existing.babyId !== candidate.babyId) return false;
+  const existingTime = new Date(existing.time).getTime();
+  const candidateTime = new Date(candidate.time).getTime();
+  return Math.abs(existingTime - candidateTime) <= DEDUP_TOLERANCE_MS;
+}
+
+export async function bulkInsertBathEvents(
+  events: Omit<BathEvent, "id">[],
+  babyId: string,
+): Promise<BulkInsertResult> {
+  const db = await getDb();
+  const existing = await getBathEventsForBaby(babyId);
+
+  let added = 0;
+  let duplicatesSkipped = 0;
+
+  for (const event of events) {
+    if (existing.some((e) => isDuplicateBath(event, e))) {
+      duplicatesSkipped++;
+      continue;
+    }
+    const id = newId();
+    await db.insert(bathEvents).values({ id, ...event });
+    existing.push({ id, ...event });
+    added++;
+  }
+
+  return { added, duplicatesSkipped };
+}
+
 // ─── WakeEvent CRUD ──────────────────────────────────────────────────────────
 
 export async function getWakeEventsForBaby(
@@ -511,4 +641,140 @@ export async function bulkInsertWakeEvents(
   }
 
   return { added, duplicatesSkipped };
+}
+
+// ─── Daily chores ────────────────────────────────────────────────────────────
+
+function toDailyChore(row: typeof dailyChores.$inferSelect): DailyChore {
+  const recurrence: ChoreRecurrence =
+    row.recurrence === 'once' ? 'once' : 'daily';
+  return {
+    id: row.id,
+    babyId: row.babyId,
+    title: row.title,
+    sortOrder: row.sortOrder,
+    createdAt: row.createdAt,
+    recurrence,
+  };
+}
+
+async function getDailyChoreById(id: string): Promise<DailyChore | null> {
+  const db = await getDb();
+  const rows = await db.select().from(dailyChores).where(eq(dailyChores.id, id)).limit(1);
+  return rows[0] ? toDailyChore(rows[0]) : null;
+}
+
+function toDailyChoreCompletion(
+  row: typeof dailyChoreCompletions.$inferSelect,
+): DailyChoreCompletion {
+  return {
+    id: row.id,
+    choreId: row.choreId,
+    dateKey: row.dateKey,
+    completedAt: row.completedAt,
+  };
+}
+
+export async function getDailyChoresForBaby(babyId: string): Promise<DailyChore[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(dailyChores)
+    .where(eq(dailyChores.babyId, babyId))
+    .orderBy(asc(dailyChores.sortOrder), asc(dailyChores.createdAt));
+  return rows.map(toDailyChore);
+}
+
+export async function getDailyChoreCompletionsForDate(
+  babyId: string,
+  dateKey: string,
+): Promise<DailyChoreCompletion[]> {
+  const db = await getDb();
+  const chores = await getDailyChoresForBaby(babyId);
+  if (chores.length === 0) return [];
+
+  const choreIds = chores.map((c) => c.id);
+  const rows = await db
+    .select()
+    .from(dailyChoreCompletions)
+    .where(
+      and(
+        inArray(dailyChoreCompletions.choreId, choreIds),
+        eq(dailyChoreCompletions.dateKey, dateKey),
+      ),
+    );
+  return rows.map(toDailyChoreCompletion);
+}
+
+export async function insertDailyChore(
+  chore: Omit<DailyChore, "id"> & { id?: string },
+): Promise<DailyChore> {
+  const db = await getDb();
+  const row: DailyChore = {
+    id: chore.id ?? newId(),
+    babyId: chore.babyId,
+    title: chore.title,
+    sortOrder: chore.sortOrder,
+    createdAt: chore.createdAt,
+    recurrence: chore.recurrence ?? 'daily',
+  };
+  await db.insert(dailyChores).values(row);
+  return row;
+}
+
+export async function deleteDailyChore(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(dailyChoreCompletions).where(eq(dailyChoreCompletions.choreId, id));
+  await db.delete(dailyChores).where(eq(dailyChores.id, id));
+}
+
+export async function setDailyChoreCompleted(
+  choreId: string,
+  dateKey: string,
+  completed: boolean,
+): Promise<void> {
+  const chore = await getDailyChoreById(choreId);
+  if (!chore) return;
+
+  if (shouldRemoveChoreOnComplete(chore.recurrence, completed)) {
+    await deleteDailyChore(choreId);
+    return;
+  }
+
+  if (chore.recurrence === 'once') {
+    return;
+  }
+
+  const db = await getDb();
+  if (!completed) {
+    await db
+      .delete(dailyChoreCompletions)
+      .where(
+        and(
+          eq(dailyChoreCompletions.choreId, choreId),
+          eq(dailyChoreCompletions.dateKey, dateKey),
+        ),
+      );
+    return;
+  }
+
+  const existing = await db
+    .select()
+    .from(dailyChoreCompletions)
+    .where(
+      and(
+        eq(dailyChoreCompletions.choreId, choreId),
+        eq(dailyChoreCompletions.dateKey, dateKey),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length > 0) return;
+
+  await db.insert(dailyChoreCompletions).values({
+    id: newId(),
+    choreId,
+    dateKey,
+    completedAt: new Date().toISOString(),
+  });
 }

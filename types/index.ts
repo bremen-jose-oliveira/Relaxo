@@ -1,11 +1,18 @@
 export type NapGoal = 2 | 3 | 4;
 
+export type AppLocale = 'system' | 'en' | 'de';
+
 export type Baby = {
   id: string;
   name: string;
   birthDate: string; // ISO date YYYY-MM-DD
   /** null = automatic (learns from logs, Napper-style); 2–4 = manual routine */
   napGoal: NapGoal | null;
+  /** false = log feed at a time only; true = track breastfeeding duration */
+  trackFeedingDuration: boolean;
+  /** Profile flags for personalized tips */
+  easilyOverstimulated: boolean;
+  highNeed: boolean;
 };
 
 export type SleepEvent = {
@@ -43,6 +50,13 @@ export type DiaperEvent = {
   notes: string | null;
 };
 
+export type BathEvent = {
+  id: string;
+  babyId: string;
+  time: string;
+  notes: string | null;
+};
+
 export type WakeType = 'morning' | 'night';
 
 export type WakeEvent = {
@@ -54,12 +68,31 @@ export type WakeEvent = {
   notes: string | null;
 };
 
-export type CareEventKind = 'sleep' | 'feeding' | 'diaper' | 'wake';
+export type ChoreRecurrence = 'daily' | 'once';
+
+export type DailyChore = {
+  id: string;
+  babyId: string;
+  title: string;
+  sortOrder: number;
+  createdAt: string;
+  recurrence: ChoreRecurrence;
+};
+
+export type DailyChoreCompletion = {
+  id: string;
+  choreId: string;
+  dateKey: string;
+  completedAt: string;
+};
+
+export type CareEventKind = 'sleep' | 'feeding' | 'diaper' | 'bath' | 'wake';
 
 export type TimelineItem =
   | { kind: 'sleep'; id: string; sortTime: string; data: SleepEvent }
   | { kind: 'feeding'; id: string; sortTime: string; data: FeedingEvent }
   | { kind: 'diaper'; id: string; sortTime: string; data: DiaperEvent }
+  | { kind: 'bath'; id: string; sortTime: string; data: BathEvent }
   | { kind: 'wake'; id: string; sortTime: string; data: WakeEvent };
 
 export type SleepSlot = 0 | 1 | 2 | 3 | 4;

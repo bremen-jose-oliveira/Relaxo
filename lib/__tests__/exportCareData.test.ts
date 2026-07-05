@@ -19,6 +19,9 @@ const baby: Baby = {
   name: 'Test Baby',
   birthDate: '2025-03-01',
   napGoal: null,
+  trackFeedingDuration: false,
+  easilyOverstimulated: false,
+  highNeed: false,
 };
 
 describe('exportCareData', () => {
@@ -70,6 +73,14 @@ describe('exportCareData', () => {
         notes: null,
       },
     ],
+    baths: [
+      {
+        id: 'ba1',
+        babyId: 'b1',
+        time: '2025-06-02T18:00:00',
+        notes: null,
+      },
+    ],
     wakes: [
       {
         id: 'w1',
@@ -84,9 +95,10 @@ describe('exportCareData', () => {
 
   it('builds Napper-style rows for all event types', () => {
     const rows = buildExportRows(input);
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     expect(rows[0]['Activity Type']).toBe('Nap');
     expect(rows.find((r) => r['Activity Type'] === 'WOKE_UP')).toBeTruthy();
+    expect(rows.find((r) => r['Activity Type'] === 'Bath')).toBeTruthy();
     expect(rows.find((r) => r['Activity Type'] === 'Night Sleep')?.Pauses).toContain('start');
   });
 
@@ -95,7 +107,7 @@ describe('exportCareData', () => {
     const parsed = parseCsvText(csv);
     const detect = autoDetectColumns(parsed.headers);
     expect(detect.isComplete).toBe(true);
-    expect(parsed.rows.length).toBe(5);
+    expect(parsed.rows.length).toBe(6);
   });
 
   it('summarizes export counts', () => {
@@ -103,8 +115,9 @@ describe('exportCareData', () => {
       sleep: 2,
       feedings: 1,
       diapers: 1,
+      baths: 1,
       wakes: 1,
-      total: 5,
+      total: 6,
     });
   });
 

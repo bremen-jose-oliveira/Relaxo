@@ -1,6 +1,38 @@
 import type { SleepEvent, SleepPause } from '@/types';
 import { minutesBetween } from '@/lib/dateUtils';
 
+const INSTANT_SLEEP_MS = 60_000;
+
+/** Napper-style instant BED_TIME row (start ≈ end) — not real sleep duration. */
+export function isInstantSleepMarker(event: SleepEvent): boolean {
+  if (!event.endTime) return false;
+  const durationMs =
+    new Date(event.endTime).getTime() - new Date(event.startTime).getTime();
+  return durationMs <= INSTANT_SLEEP_MS;
+}
+
+/** Import artifact: ~24h night with same clock time next day. */
+export function isArtificial24hNightSleep(event: SleepEvent): boolean {
+  if (event.type !== 'night' || !event.endTime) return false;
+  const start = new Date(event.startTime);
+  const end = new Date(event.endTime);
+  const durationMs = end.getTime() - start.getTime();
+  return (
+    durationMs >= 23 * 60 * 60 * 1000 &&
+    durationMs <= 25 * 60 * 60 * 1000 &&
+    start.getHours() === end.getHours() &&
+    start.getMinutes() === end.getMinutes() &&
+    start.getSeconds() === end.getSeconds()
+  );
+}
+
+export function contributesToSleepTotals(event: SleepEvent): boolean {
+  if (!event.endTime) return false;
+  if (isInstantSleepMarker(event)) return false;
+  if (isArtificial24hNightSleep(event)) return false;
+  return true;
+}
+
 export type TimeInterval = { start: Date; end: Date };
 
 export function mergeIntervals(intervals: TimeInterval[]): TimeInterval[] {
@@ -78,7 +110,7 @@ export function totalSleepMinutesInRange(
   const clipped: TimeInterval[] = [];
 
   for (const event of events) {
-    if (!event.endTime) continue;
+    if (!contributesToSleepTotals(event)) continue;
     const eventPauses = pausesByEventId.get(event.id) ?? [];
     const chunks = sleepIntervalsMinusPauses(event, eventPauses);
     for (const chunk of chunks) {

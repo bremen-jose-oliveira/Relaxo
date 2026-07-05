@@ -2,6 +2,9 @@ import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Colors, spacing } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { formatDate, formatTime } from '@/lib/dateUtils';
+import { isInstantFeeding } from '@/lib/feedingUtils';
+import { useTranslation } from '@/lib/i18n';
+import { useAppStore } from '@/store/useAppStore';
 import type { TimelineItem } from '@/types';
 
 type Props = {
@@ -10,48 +13,80 @@ type Props = {
   onLongPress?: () => void;
 };
 
-function getMeta(item: TimelineItem, colors: (typeof Colors)['light']) {
+function getMeta(
+  item: TimelineItem,
+  colors: (typeof Colors)['light'],
+  t: ReturnType<typeof useTranslation>
+) {
   switch (item.kind) {
     case 'sleep': {
       const e = item.data;
       return {
         icon: '💤',
         color: colors.tint,
-        label: e.type === 'nap' ? 'Nap' : 'Bedtime',
+        label: e.type === 'nap' ? t('timeline.nap') : t('timeline.bedtime'),
         subtitle: `${formatDate(new Date(e.startTime))} · ${formatTime(new Date(e.startTime))}${
-          e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : ' – ongoing'
+          e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : ` – ${t('common.ongoing')}`
         }`,
-        badge: !e.endTime ? 'Ongoing' : null,
+        badge: !e.endTime ? t('common.ongoing') : null,
       };
     }
     case 'feeding': {
       const e = item.data;
       const typeLabel =
-        e.feedType === 'breast' ? 'Breast' : e.feedType === 'bottle' ? 'Bottle' : 'Solid';
+        e.feedType === 'breast'
+          ? t('timeline.breast')
+          : e.feedType === 'bottle'
+            ? t('timeline.bottle')
+            : t('timeline.solid');
       const side =
         e.feedType === 'breast' && e.side
-          ? ` · ${e.side === 'both' ? 'both sides' : e.side}`
+          ? ` · ${
+              e.side === 'both'
+                ? t('timeline.bothSides')
+                : e.side === 'left'
+                  ? t('common.left')
+                  : t('common.right')
+            }`
           : '';
       const amount =
         e.amount != null && e.unit ? ` · ${e.amount}${e.unit}` : '';
+      const instant = isInstantFeeding(e);
+      const subtitle = instant
+        ? t('timeline.fedAt', { time: formatTime(new Date(e.startTime)) })
+        : `${formatDate(new Date(e.startTime))} · ${formatTime(new Date(e.startTime))}${
+            e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : ` – ${t('common.ongoing')}`
+          }`;
       return {
         icon: '🍼',
         color: colors.feeding,
-        label: `${typeLabel} feed${side}${amount}`,
-        subtitle: `${formatDate(new Date(e.startTime))} · ${formatTime(new Date(e.startTime))}${
-          e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : e.feedType === 'breast' ? ' – ongoing' : ''
-        }`,
-        badge: e.feedType === 'breast' && !e.endTime ? 'Ongoing' : null,
+        label: `${typeLabel} ${t('timeline.feed')}${side}${amount}`,
+        subtitle,
+        badge: e.feedType === 'breast' && !e.endTime ? t('common.ongoing') : null,
       };
     }
     case 'diaper': {
       const e = item.data;
       const label =
-        e.diaperType === 'wet' ? 'Wet diaper' : e.diaperType === 'dirty' ? 'Dirty diaper' : 'Mixed diaper';
+        e.diaperType === 'wet'
+          ? t('timeline.wetDiaper')
+          : e.diaperType === 'dirty'
+            ? t('timeline.dirtyDiaper')
+            : t('timeline.mixedDiaper');
       return {
         icon: '👶',
         color: colors.diaper,
         label,
+        subtitle: `${formatDate(new Date(e.time))} · ${formatTime(new Date(e.time))}`,
+        badge: null,
+      };
+    }
+    case 'bath': {
+      const e = item.data;
+      return {
+        icon: '🛁',
+        color: colors.bath,
+        label: t('timeline.bath'),
         subtitle: `${formatDate(new Date(e.time))} · ${formatTime(new Date(e.time))}`,
         badge: null,
       };
@@ -62,7 +97,7 @@ function getMeta(item: TimelineItem, colors: (typeof Colors)['light']) {
       return {
         icon: isMorning ? '☀️' : '🌙',
         color: colors.wake,
-        label: isMorning ? 'Start day' : 'Night waking',
+        label: isMorning ? t('timeline.morningWake') : t('timeline.nightWaking'),
         subtitle: `${formatDate(new Date(e.time))} · ${formatTime(new Date(e.time))}${
           e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : ''
         }`,
@@ -75,7 +110,9 @@ function getMeta(item: TimelineItem, colors: (typeof Colors)['light']) {
 export function TimelineEntry({ item, onPress, onLongPress }: Props) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const meta = getMeta(item, colors);
+  const locale = useAppStore((s) => s.locale);
+  const t = useTranslation(locale);
+  const meta = getMeta(item, colors, t);
 
   return (
     <Pressable onPress={onPress} onLongPress={onLongPress}>

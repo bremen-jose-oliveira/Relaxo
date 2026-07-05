@@ -43,6 +43,34 @@
       "when": 1782389000000,
       "tag": "0005_nap_schedule_auto",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1782390000000,
+      "tag": "0006_feeding_prefs_locale",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1782391000000,
+      "tag": "0007_bath_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1782392000000,
+      "tag": "0008_daily_chores_temperament",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1782393000000,
+      "tag": "0009_chore_recurrence",
+      "breakpoints": true
     }
   ]
 }

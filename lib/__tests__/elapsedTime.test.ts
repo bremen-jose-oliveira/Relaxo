@@ -1,4 +1,8 @@
-import { getSleepElapsedMs, formatElapsedClock } from '../elapsedTime';
+import {
+  getCurrentSegmentElapsedMs,
+  getSleepElapsedMs,
+  formatElapsedClock,
+} from '../elapsedTime';
 import type { SleepPause } from '@/types';
 
 describe('elapsedTime', () => {
@@ -39,5 +43,25 @@ describe('elapsedTime', () => {
   it('formats clock strings', () => {
     expect(formatElapsedClock(45 * 1000)).toBe('0:45');
     expect(formatElapsedClock((65 * 60 + 5) * 1000)).toBe('1:05:05');
+  });
+
+  it('counts current segment from last resume, not session start', () => {
+    const start = new Date('2025-06-25T01:00:00');
+    const pausesWithResume: SleepPause[] = [
+      {
+        id: 'p1',
+        sleepEventId: 's1',
+        startTime: '2025-06-25T03:00:00',
+        endTime: '2025-06-25T03:20:00',
+      },
+    ];
+    const now = new Date('2025-06-25T03:40:00');
+
+    expect(
+      getCurrentSegmentElapsedMs(start, now, 's1', pausesWithResume, false)
+    ).toBe(20 * 60 * 1000);
+    expect(getSleepElapsedMs(start, now, 's1', pausesWithResume)).toBe(
+      (2 * 60 + 20) * 60 * 1000
+    );
   });
 });

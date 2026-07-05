@@ -5,6 +5,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   Pressable,
+  ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, spacing, touchTarget } from '@/constants/Colors';
@@ -12,25 +14,30 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
 import { Card } from '@/components/Card';
 import { ConfidenceBadge } from '@/components/ConfidenceBadge';
+import { AgeInsightCard } from '@/components/AgeInsightCard';
 import { FeedingLogModal } from '@/components/FeedingLogModal';
 import { DiaperLogModal } from '@/components/DiaperLogModal';
+import { BathLogModal } from '@/components/BathLogModal';
 import {
   useAppStore,
   useActiveBaby,
   useOngoingSleep,
   useOngoingFeeding,
   useIsSleepPaused,
-  useMorningWakeToday,
 } from '@/store/useAppStore';
+import { getCurrentSegmentStart } from '@/lib/elapsedTime';
 import { getOngoingPause } from '@/lib/sleepPauses';
 import { SleepTimer } from '@/components/SleepTimer';
 import { formatNapScheduleLabel } from '@/lib/napSchedule';
 import { formatTime } from '@/lib/dateUtils';
+import { useTranslation } from '@/lib/i18n';
 import { useRouter } from 'expo-router';
 
 export default function HomeScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+  const locale = useAppStore((s) => s.locale);
+  const t = useTranslation(locale);
 
   const initialize = useAppStore((s) => s.initialize);
   const isInitialized = useAppStore((s) => s.isInitialized);
@@ -40,18 +47,23 @@ export default function HomeScreen() {
   const endSleep = useAppStore((s) => s.endSleep);
   const pauseSleep = useAppStore((s) => s.pauseSleep);
   const resumeSleep = useAppStore((s) => s.resumeSleep);
-  const startDay = useAppStore((s) => s.startDay);
+  const endBreastFeed = useAppStore((s) => s.endBreastFeed);
   const sleepPauses = useAppStore((s) => s.sleepPauses);
+  const events = useAppStore((s) => s.events);
+  const wakes = useAppStore((s) => s.wakes);
 
   const baby = useActiveBaby();
   const ongoing = useOngoingSleep();
   const isPaused = useIsSleepPaused();
-  const morningWake = useMorningWakeToday();
   const ongoingFeed = useOngoingFeeding();
+  const trackFeedDuration = baby?.trackFeedingDuration ?? false;
   const router = useRouter();
   const [feedingOpen, setFeedingOpen] = useState(false);
   const [diaperOpen, setDiaperOpen] = useState(false);
+  const [bathOpen, setBathOpen] = useState(false);
   const addDiaper = useAppStore((s) => s.addDiaper);
+  const addBath = useAppStore((s) => s.addBath);
+  const { height: windowHeight } = useWindowDimensions();
 
   useEffect(() => {
     initialize();
@@ -69,12 +81,12 @@ export default function HomeScreen() {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.emptyState}>
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>Welcome to Relaxo</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('home.welcome')}</Text>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            Set up your baby's profile to start tracking sleep and getting nap predictions.
+            {t('home.welcomeSub')}
           </Text>
           <BigButton
-            title="Set up baby profile"
+            title={t('home.setupProfile')}
             style={{ marginTop: spacing.xl, width: '100%' }}
             onPress={() => router.push('/profile')}
           />
@@ -84,23 +96,41 @@ export default function HomeScreen() {
   }
 
   const openPause = ongoing ? getOngoingPause(sleepPauses, ongoing.id) : null;
+  const asleepSinceTime =
+    ongoing && !isPaused
+      ? getCurrentSegmentStart(
+          new Date(ongoing.startTime),
+          ongoing.id,
+          sleepPauses
+        )
+      : null;
 
   const statusColor = ongoing ? (isPaused ? colors.wake : colors.asleep) : colors.awake;
   const statusText = ongoing
     ? isPaused && openPause
-      ? `Paused since ${formatTime(new Date(openPause.startTime))}`
-      : `Asleep since ${formatTime(new Date(ongoing.startTime))}`
+      ? t('home.pausedSince', { time: formatTime(new Date(openPause.startTime)) })
+      : t('home.asleepSince', {
+          time: formatTime(asleepSinceTime ?? new Date(ongoing.startTime)),
+        })
     : prediction
-      ? `Awake · next ${prediction.slotLabel}`
-      : 'Awake';
+      ? t('home.awakeNext', { slot: prediction.slotLabel })
+      : t('home.awake');
 
   const sleepType = ongoing?.type ?? 'nap';
+  const sleepTypeLabel = sleepType === 'night' ? t('home.bedtime') : t('home.nap');
 
   return (
     <SafeAreaView
       style={[styles.container, { backgroundColor: colors.background }]}
       edges={['bottom']}>
-      <View style={styles.body}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { minHeight: windowHeight - 100 },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled">
         <View style={styles.centerBlock}>
           <View style={styles.hero}>
             <Text style={[styles.babyName, { color: colors.text }]}>{baby.name}</Text>
@@ -110,16 +140,10 @@ export default function HomeScreen() {
               <Text style={[styles.statusText, { color: colors.text }]}>{statusText}</Text>
             </View>
 
-            {morningWake && !ongoing && (
-              <Text style={[styles.dayStarted, { color: colors.textSecondary }]}>
-                Day started at {formatTime(new Date(morningWake.time))}
-              </Text>
-            )}
-
-            {prediction && !ongoing && (
+            {prediction && !ongoing && !ongoingFeed && (
               <Card style={styles.heroCard}>
                 <Text style={[styles.predictionLabel, { color: colors.textSecondary }]}>
-                  Predicted {prediction.slotLabel}
+                  {t('home.predicted', { slot: prediction.slotLabel })}
                 </Text>
                 <Text style={[styles.predictionTime, { color: colors.text }]}>
                   {formatTime(prediction.predictedTime)}
@@ -148,8 +172,19 @@ export default function HomeScreen() {
                 />
                 <Text style={[styles.asleepHint, { color: colors.textSecondary }]}>
                   {isPaused
-                    ? 'Tap Resume when baby is back asleep'
-                    : `Started at ${formatTime(new Date(ongoing.startTime))}`}
+                    ? t('home.tapResume')
+                    : t('home.asleepSince', {
+                        time: formatTime(asleepSinceTime ?? new Date(ongoing.startTime)),
+                      })}
+                </Text>
+              </Card>
+            )}
+
+            {ongoingFeed && trackFeedDuration && (
+              <Card style={styles.heroCard}>
+                <Text style={[styles.predictionLabel, { color: colors.textSecondary }]}>
+                  {t('home.feedingSince', { time: formatTime(new Date(ongoingFeed.startTime)) })}
+                  {ongoingFeed.side ? ` · ${ongoingFeed.side}` : ''}
                 </Text>
               </Card>
             )}
@@ -160,39 +195,33 @@ export default function HomeScreen() {
               <>
                 {isPaused ? (
                   <BigButton
-                    title="Resume sleep"
+                    title={t('home.resumeSleep')}
                     variant="primary"
                     onPress={() => resumeSleep()}
                     style={{ marginBottom: spacing.md }}
                   />
                 ) : (
                   <BigButton
-                    title="Pause sleep"
+                    title={t('home.pauseSleep')}
                     variant="secondary"
                     onPress={() => pauseSleep()}
                     style={{ marginBottom: spacing.md }}
                   />
                 )}
-                <BigButton title="End sleep" variant="primary" onPress={() => endSleep()} />
+                <BigButton title={t('home.endSleep')} variant="primary" onPress={() => endSleep()} />
               </>
+            ) : ongoingFeed && trackFeedDuration ? (
+              <BigButton title={t('home.endFeeding')} variant="primary" onPress={() => endBreastFeed()} />
             ) : (
               <>
-                {!morningWake && (
-                  <BigButton
-                    title="Start day"
-                    variant="primary"
-                    onPress={() => startDay()}
-                    style={{ marginBottom: spacing.md }}
-                  />
-                )}
                 <BigButton
-                  title="Start nap"
-                  variant={morningWake ? 'primary' : 'secondary'}
+                  title={t('home.startNap')}
+                  variant="primary"
                   onPress={() => startSleep('nap')}
                   style={{ marginBottom: spacing.md }}
                 />
                 <BigButton
-                  title="Start bedtime"
+                  title={t('home.startBedtime')}
                   variant="secondary"
                   onPress={() => startSleep('night')}
                 />
@@ -200,20 +229,25 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {(ongoing || ongoingFeed) && (
+          {ongoing && (
             <View style={styles.hints}>
-              {ongoing && (
-                <Text style={[styles.hintText, { color: colors.textSecondary }]}>
-                  Logging as {sleepType === 'night' ? 'bedtime' : 'nap'}
-                </Text>
-              )}
-              {ongoingFeed && (
-                <Text style={[styles.hintText, { color: colors.feeding }]}>
-                  Breastfeeding since {formatTime(new Date(ongoingFeed.startTime))}
-                </Text>
-              )}
+              <Text style={[styles.hintText, { color: colors.textSecondary }]}>
+                {t('home.loggingAs', { type: sleepTypeLabel })}
+              </Text>
             </View>
           )}
+        </View>
+
+        <View style={[styles.insightWrap, { borderTopColor: colors.border }]}>
+          <AgeInsightCard
+            birthDate={baby.birthDate}
+            events={events}
+            wakes={wakes}
+            easilyOverstimulated={baby.easilyOverstimulated}
+            highNeed={baby.highNeed}
+            locale={locale}
+            t={t}
+          />
         </View>
 
         <View style={styles.quickLogRow}>
@@ -227,7 +261,7 @@ export default function HomeScreen() {
                 opacity: pressed ? 0.8 : 1,
               },
             ]}>
-            <Text style={[styles.quickBtnText, { color: colors.text }]}>Log feeding</Text>
+            <Text style={[styles.quickBtnText, { color: colors.text }]}>{t('home.logFeeding')}</Text>
           </Pressable>
           <Pressable
             onPress={() => setDiaperOpen(true)}
@@ -239,10 +273,22 @@ export default function HomeScreen() {
                 opacity: pressed ? 0.8 : 1,
               },
             ]}>
-            <Text style={[styles.quickBtnText, { color: colors.text }]}>Log diaper</Text>
+            <Text style={[styles.quickBtnText, { color: colors.text }]}>{t('home.logDiaper')}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setBathOpen(true)}
+            style={({ pressed }) => [
+              styles.quickBtn,
+              {
+                backgroundColor: colors.bath + '33',
+                borderColor: colors.bath,
+                opacity: pressed ? 0.8 : 1,
+              },
+            ]}>
+            <Text style={[styles.quickBtnText, { color: colors.text }]}>{t('home.logBath')}</Text>
           </Pressable>
         </View>
-      </View>
+      </ScrollView>
 
       <FeedingLogModal
         visible={feedingOpen}
@@ -258,6 +304,15 @@ export default function HomeScreen() {
         }}
         onClose={() => setDiaperOpen(false)}
       />
+      <BathLogModal
+        visible={bathOpen}
+        babyId={baby.id}
+        onSave={async (payload) => {
+          await addBath(payload);
+          setBathOpen(false);
+        }}
+        onClose={() => setBathOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -265,26 +320,27 @@ export default function HomeScreen() {
 const CONTENT_MAX_WIDTH = 400;
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  container: { flex: 1 },
+  scroll: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
   },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  body: {
-    flex: 1,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.sm,
-  },
   centerBlock: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     width: '100%',
     maxWidth: CONTENT_MAX_WIDTH,
     alignSelf: 'center',
+    paddingBottom: spacing.lg,
   },
   hero: {
     width: '100%',
@@ -316,11 +372,6 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 16,
     fontWeight: '600',
-    textAlign: 'center',
-  },
-  dayStarted: {
-    fontSize: 14,
-    marginBottom: spacing.md,
     textAlign: 'center',
   },
   heroCard: {
@@ -385,16 +436,27 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: 'center',
   },
+  insightWrap: {
+    width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+    marginTop: spacing.md,
+    paddingTop: spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
   quickLogRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
     width: '100%',
     maxWidth: CONTENT_MAX_WIDTH,
     alignSelf: 'center',
-    flexShrink: 0,
+    marginTop: spacing.lg,
   },
   quickBtn: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: '30%',
+    minWidth: '30%',
     minHeight: touchTarget.minHeight,
     borderRadius: 16,
     borderWidth: 1.5,

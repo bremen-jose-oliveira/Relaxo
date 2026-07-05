@@ -13,7 +13,7 @@ function makeSleep(
 describe('getSleepTrend', () => {
   const now = new Date('2025-06-25T14:00:00');
 
-  it('uses wake-day totals instead of double-counting overnight on calendar days', () => {
+  it('counts sleep that starts on the calendar day (not overnight from prior day)', () => {
     const events: SleepEvent[] = [
       makeSleep('night', '2025-06-24T19:00:00', '2025-06-25T07:00:00', 'night'),
       makeSleep('nap1', '2025-06-25T09:00:00', '2025-06-25T10:00:00', 'nap'),
@@ -32,13 +32,13 @@ describe('getSleepTrend', () => {
 
     const trend = getSleepTrend(events, wakes, [], 1, now);
     expect(trend).toHaveLength(1);
-    // 2h naps only — last night's sleep belongs to previous wake day
+    // Night sleep started yesterday — only today's naps count on this calendar day
     expect(trend[0].totalMinutes).toBe(120);
     expect(trend[0].napCount).toBe(2);
     expect(trend[0].bedtimeCount).toBe(0);
   });
 
-  it('merges overlapping sleep rows within a wake day', () => {
+  it('merges overlapping sleep rows within a calendar day', () => {
     const events: SleepEvent[] = [
       makeSleep('dup-a', '2025-06-25T09:00:00', '2025-06-25T11:00:00', 'nap'),
       makeSleep('dup-b', '2025-06-25T10:00:00', '2025-06-25T11:30:00', 'nap'),

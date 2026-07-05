@@ -1,6 +1,6 @@
 import type { Baby, NapGoal, SleepEvent, SleepPause, SleepSlot, WakeEvent } from '@/types';
 import { resolveNapGoal, type NapGoalSource } from '@/lib/napSchedule';
-import { getWakeDayBounds } from '@/lib/dayAnchor';
+import { getCalendarDayBounds } from '@/lib/dayAnchor';
 import {
   groupPausesByEventId,
   totalSleepMinutesInRange,
@@ -60,7 +60,7 @@ export function getAgeDefaultMidpoint(weeks: number): number {
   return (min + max) / 2;
 }
 
-/** Completed naps since today's day start (morning wake, not midnight). */
+/** Completed naps since today's calendar day (midnight). */
 export function countNapsToday(
   events: SleepEvent[],
   wakes: WakeEvent[],
@@ -167,18 +167,19 @@ export function getLastWakeUpTime(
 ): Date | null {
   if (isCurrentlyAsleep(events)) return null;
 
+  const calendarStart = startOfDay(now);
   const dayStart = getDayStartTime(events, wakes, now);
-  const completed = dayStart
-    ? getCompletedEvents(events).filter(
-        (e) => new Date(e.endTime!).getTime() >= dayStart.getTime()
-      )
-    : getCompletedEvents(events);
+  const hasWakeAnchor = dayStart.getTime() > calendarStart.getTime();
+
+  const completed = getCompletedEvents(events).filter(
+    (e) => new Date(e.endTime!).getTime() >= calendarStart.getTime()
+  );
 
   if (completed.length > 0) {
     return new Date(completed[completed.length - 1].endTime!);
   }
 
-  if (dayStart) return dayStart;
+  if (hasWakeAnchor) return dayStart;
   return null;
 }
 
@@ -326,18 +327,6 @@ export function getDaytimeSleepTrend(
   return result;
 }
 
-function overlapMinutes(
-  startA: Date,
-  endA: Date,
-  startB: Date,
-  endB: Date
-): number {
-  const start = Math.max(startA.getTime(), startB.getTime());
-  const end = Math.min(endA.getTime(), endB.getTime());
-  if (end <= start) return 0;
-  return (end - start) / (60 * 1000);
-}
-
 export function getSleepTrend(
   events: SleepEvent[],
   wakes: WakeEvent[],
@@ -361,12 +350,7 @@ export function getSleepTrend(
     anchor.setHours(0, 0, 0, 0);
     const key = formatDateKey(anchor);
 
-    const { start: cycleStart, end: cycleEnd } = getWakeDayBounds(
-      events,
-      wakes,
-      anchor,
-      now
-    );
+    const { start: cycleStart, end: cycleEnd } = getCalendarDayBounds(anchor, now);
 
     const cycleEvents = completed.filter((e) => {
       const start = new Date(e.startTime);
@@ -377,7 +361,7 @@ export function getSleepTrend(
     const bedtimeCount = cycleEvents.filter((e) => e.type === 'night').length;
 
     const totalMinutes = totalSleepMinutesInRange(
-      completed,
+      cycleEvents,
       pausesByEventId,
       cycleStart,
       cycleEnd
@@ -395,12 +379,17 @@ export function getSleepTrend(
   return result;
 }
 
-export function getSleepMetrics24h(events: SleepEvent[], now: Date): {
+export function getSleepMetrics24h(
+  events: SleepEvent[],
+  sleepPauses: SleepPause[],
+  now: Date
+): {
   total24hMinutes: number;
   daytimeTodayMinutes: number;
   nighttimeLastNightMinutes: number;
 } {
   const completed = getCompletedEvents(events);
+  const pausesByEventId = groupPausesByEventId(sleepPauses);
 
   const windowEnd = new Date(now);
   const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -415,45 +404,30 @@ export function getSleepMetrics24h(events: SleepEvent[], now: Date): {
   const nightEnd = new Date(todayStart);
   nightEnd.setHours(8, 0, 0, 0);
 
-  const total24hMinutes = completed.reduce((sum, e) => {
-    return (
-      sum +
-      overlapMinutes(
-        new Date(e.startTime),
-        new Date(e.endTime!),
-        windowStart,
-        windowEnd
-      )
-    );
-  }, 0);
+  const total24hMinutes = totalSleepMinutesInRange(
+    completed,
+    pausesByEventId,
+    windowStart,
+    windowEnd
+  );
 
-  const daytimeTodayMinutes = completed.reduce((sum, e) => {
-    return (
-      sum +
-      overlapMinutes(
-        new Date(e.startTime),
-        new Date(e.endTime!),
-        todayStart,
-        todayDaytimeEnd
-      )
-    );
-  }, 0);
+  const daytimeTodayMinutes = totalSleepMinutesInRange(
+    completed,
+    pausesByEventId,
+    todayStart,
+    todayDaytimeEnd
+  );
 
-  const nighttimeLastNightMinutes = completed.reduce((sum, e) => {
-    return (
-      sum +
-      overlapMinutes(
-        new Date(e.startTime),
-        new Date(e.endTime!),
-        nightStart,
-        nightEnd
-      )
-    );
-  }, 0);
+  const nighttimeLastNightMinutes = totalSleepMinutesInRange(
+    completed,
+    pausesByEventId,
+    nightStart,
+    nightEnd
+  );
 
   return {
-    total24hMinutes: Math.round(total24hMinutes),
-    daytimeTodayMinutes: Math.round(daytimeTodayMinutes),
-    nighttimeLastNightMinutes: Math.round(nighttimeLastNightMinutes),
+    total24hMinutes: Math.min(1440, Math.round(total24hMinutes)),
+    daytimeTodayMinutes: Math.min(720, Math.round(daytimeTodayMinutes)),
+    nighttimeLastNightMinutes: Math.min(720, Math.round(nighttimeLastNightMinutes)),
   };
 }

@@ -13,6 +13,7 @@
     "expo-font": "~56.0.7",
     "expo-linear-gradient": "~56.0.4",
     "expo-linking": "~56.0.14",
+    "expo-localization": "~56.0.6",
     "expo-notifications": "~56.0.18",
     "expo-router": "~56.2.11",
     "expo-sharing": "~56.0.18",
@@ -54,7 +55,9 @@
     "test": "jest",
     "db:generate": "drizzle-kit generate",
     "build:ios:preview": "eas build --platform ios --profile preview",
-    "build:android:preview": "eas build --platform android --profile preview"
+    "build:android:preview": "eas build --platform android --profile preview",
+    "sync:preview-build": "node scripts/sync-preview-build.mjs",
+    "generate:icons": "cd assets/images && magick -background none logo.svg -resize 1024x1024 icon.png && magick -background none logo.svg -resize 512x512 splash-icon.png && magick -background none logo.svg -resize 1024x1024 android-icon-foreground.png && magick -size 1024x1024 xc:'#7C9A92' android-icon-background.png && magick -background none logo.svg -resize 48x48 favicon.png"
   },
   "private": true
 }

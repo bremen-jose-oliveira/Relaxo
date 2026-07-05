@@ -1,10 +1,10 @@
-import { buildTimeline, filterTimelineForWakeDay } from '@/lib/timeline';
+import { buildTimeline, filterTimelineForDayView } from '@/lib/timeline';
 import type { SleepEvent, WakeEvent } from '@/types';
 
-describe('wake-day timeline', () => {
+describe('calendar-day timeline', () => {
   const babyId = 'b1';
 
-  it('includes overnight events before next morning wake', () => {
+  it('includes events on the selected calendar day only', () => {
     const wakes: WakeEvent[] = [
       {
         id: 'w1',
@@ -34,9 +34,10 @@ describe('wake-day timeline', () => {
     ];
     const feedings: never[] = [];
     const diapers: never[] = [];
-    const items = buildTimeline(sleep, feedings, diapers, wakes);
+    const baths: never[] = [];
+    const items = buildTimeline(sleep, feedings, diapers, baths, wakes);
     const anchor = new Date('2025-06-20T12:00:00.000Z');
-    const filtered = filterTimelineForWakeDay(
+    const filtered = filterTimelineForDayView(
       items,
       sleep,
       wakes,

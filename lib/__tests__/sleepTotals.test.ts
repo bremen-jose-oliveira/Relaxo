@@ -1,4 +1,6 @@
 import {
+  isArtificial24hNightSleep,
+  isInstantSleepMarker,
   mergeIntervals,
   sleepIntervalsMinusPauses,
   totalSleepMinutesInRange,
@@ -40,5 +42,32 @@ describe('sleepTotals', () => {
       new Date('2025-06-02T06:00:00')
     );
     expect(total).toBe(570);
+  });
+
+  it('ignores instant bedtime markers and artificial 24h import rows', () => {
+    const instant: SleepEvent = {
+      id: 'i1',
+      babyId: 'b1',
+      type: 'night',
+      startTime: '2026-06-22T20:14:00',
+      endTime: '2026-06-22T20:14:00',
+    };
+    const artificial: SleepEvent = {
+      id: 'a1',
+      babyId: 'b1',
+      type: 'night',
+      startTime: '2026-06-21T20:14:00',
+      endTime: '2026-06-22T20:14:00',
+    };
+    expect(isInstantSleepMarker(instant)).toBe(true);
+    expect(isArtificial24hNightSleep(artificial)).toBe(true);
+
+    const total = totalSleepMinutesInRange(
+      [instant, artificial],
+      new Map(),
+      new Date('2026-06-22T00:00:00'),
+      new Date('2026-06-23T00:00:00')
+    );
+    expect(total).toBe(0);
   });
 });

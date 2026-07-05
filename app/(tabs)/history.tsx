@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, spacing } from '@/constants/Colors';
@@ -6,17 +6,21 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { Card } from '@/components/Card';
 import { TrendBarChart } from '@/components/TrendBarChart';
 import { TimelineEntry } from '@/components/TimelineEntry';
+import { WakeDayPicker } from '@/components/WakeDayPicker';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { getSleepMetrics24h, getSleepTrend } from '@/lib/predictNextSleep';
 import { getDiaperTrend, getFeedingTrend } from '@/lib/careTrends';
-import { buildChartBars, formatChartDateRange, formatDayGroupHeader } from '@/lib/chartLabels';
+import { buildChartBars, formatChartDateRange } from '@/lib/chartLabels';
 import {
   computeNiceMax,
   computeSleepMaxHours,
   computeSleepMaxMinutes,
   sleepMinutesToChartValue,
 } from '@/lib/chartScale';
-import { buildTimeline, groupTimelineByDay } from '@/lib/timeline';
+import { buildTimeline, filterTimelineForDayView } from '@/lib/timeline';
+import { formatSleepDuration, getWakeDaySummary } from '@/lib/daySummary';
+import { parseDateKey } from '@/lib/dateUtils';
+import { useTranslation } from '@/lib/i18n';
 
 const TREND_DAYS = 14;
 
@@ -45,24 +49,69 @@ function StatBlock({
 export default function HistoryScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+  const locale = useAppStore((s) => s.locale);
+  const t = useTranslation(locale);
   const [sleepUnit, setSleepUnit] = useState<'hours' | 'minutes'>('hours');
+  const [selectedDay, setSelectedDay] = useState(() => new Date());
+  const scrollRef = useRef<ScrollView>(null);
+  const dayViewOffset = useRef(0);
+
+  const jumpToDay = useCallback((dateKey: string) => {
+    setSelectedDay(parseDateKey(dateKey));
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, dayViewOffset.current - spacing.sm),
+      animated: true,
+    });
+  }, []);
 
   const events = useAppStore((s) => s.events);
   const feedings = useAppStore((s) => s.feedings);
   const diapers = useAppStore((s) => s.diapers);
+  const baths = useAppStore((s) => s.baths);
   const sleepPauses = useAppStore((s) => s.sleepPauses);
   const wakes = useAppStore((s) => s.wakes);
   const baby = useActiveBaby();
   const now = useMemo(() => new Date(), []);
 
-  const timeline = useMemo(
-    () => buildTimeline(events, feedings, diapers, wakes),
-    [events, feedings, diapers, wakes]
+  const allTimeline = useMemo(
+    () => buildTimeline(events, feedings, diapers, baths, wakes),
+    [events, feedings, diapers, baths, wakes]
   );
 
-  const dayGroups = useMemo(
-    () => groupTimelineByDay(timeline, TREND_DAYS, now),
-    [timeline, now]
+  const selectedDayTimeline = useMemo(
+    () =>
+      filterTimelineForDayView(allTimeline, events, wakes, selectedDay, now),
+    [allTimeline, events, wakes, selectedDay, now]
+  );
+
+  const selectedSummary = useMemo(
+    () =>
+      getWakeDaySummary(
+        events,
+        sleepPauses,
+        feedings,
+        diapers,
+        baths,
+        wakes,
+        selectedDay,
+        now
+      ),
+    [events, sleepPauses, feedings, diapers, baths, wakes, selectedDay, now]
+  );
+
+  const todaySummary = useMemo(
+    () =>
+      getWakeDaySummary(
+        events,
+        sleepPauses,
+        feedings,
+        diapers,
+        baths,
+        wakes,
+        now,
+        now
+      ),
+    [events, sleepPauses, feedings, diapers, baths, wakes, now]
   );
 
   const sleepTrend = useMemo(
@@ -71,25 +120,15 @@ export default function HistoryScreen() {
   );
   const feedingTrend = useMemo(() => getFeedingTrend(feedings, TREND_DAYS, now), [feedings, now]);
   const diaperTrend = useMemo(() => getDiaperTrend(diapers, TREND_DAYS, now), [diapers, now]);
-  const sleep24h = useMemo(() => getSleepMetrics24h(events, now), [events, now]);
+  const sleep24h = useMemo(
+    () => getSleepMetrics24h(events, sleepPauses, now),
+    [events, sleepPauses, now]
+  );
 
   const dateRangeLabel = useMemo(() => {
     if (sleepTrend.length === 0) return '';
     return formatChartDateRange(sleepTrend[0].date, sleepTrend[sleepTrend.length - 1].date);
   }, [sleepTrend]);
-
-  const wakeTodayCount = useMemo(
-    () =>
-      wakes.filter((w) => {
-        const d = new Date(w.time);
-        return (
-          d.getFullYear() === now.getFullYear() &&
-          d.getMonth() === now.getMonth() &&
-          d.getDate() === now.getDate()
-        );
-      }).length,
-    [wakes, now]
-  );
 
   const sleepChartData = useMemo(
     () =>
@@ -128,15 +167,11 @@ export default function HistoryScreen() {
   );
   const diaperMax = computeNiceMax(Math.max(...diaperTrend.map((d) => d.total), 0), 4);
 
-  const todaySleep = sleepTrend.at(-1);
-  const todayFeeding = feedingTrend.at(-1);
-  const todayDiaper = diaperTrend.at(-1);
-
   if (!baby) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={[styles.empty, { color: colors.textSecondary }]}>
-          Set up a baby profile to view history.
+          {t('history.setupProfile')}
         </Text>
       </SafeAreaView>
     );
@@ -144,20 +179,85 @@ export default function HistoryScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Trends</Text>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}>
+        <View
+          onLayout={(e) => {
+            dayViewOffset.current = e.nativeEvent.layout.y;
+          }}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('history.dayView')}</Text>
+          <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
+            {t('history.dayViewHint')}
+          </Text>
+
+          <Card style={styles.dayCard}>
+            <WakeDayPicker
+              label={t('log.day')}
+              selectedDay={selectedDay}
+              onSelectedDayChange={setSelectedDay}
+              events={events}
+              wakes={wakes}
+              now={now}
+            />
+
+            <View style={styles.statGrid}>
+            <StatBlock
+              colors={colors}
+              label={t('history.sleepToday')}
+              value={formatSleepDuration(selectedSummary.totalSleepMinutes)}
+              sub={`${selectedSummary.napCount} ${t('timeline.nap').toLowerCase()} · ${selectedSummary.bedtimeCount} ${t('timeline.bedtime').toLowerCase()}`}
+            />
+            <StatBlock
+              colors={colors}
+              label={t('history.feeds')}
+              value={`${selectedSummary.feedCount}`}
+              sub={`B ${selectedSummary.breast} · Bo ${selectedSummary.bottle} · S ${selectedSummary.solid}`}
+            />
+            <StatBlock
+              colors={colors}
+              label={t('history.diapers')}
+              value={`${selectedSummary.diaperCount}`}
+              sub={`W ${selectedSummary.wet} · D ${selectedSummary.dirty} · M ${selectedSummary.mixed}`}
+            />
+            <StatBlock
+              colors={colors}
+              label={t('history.baths')}
+              value={`${selectedSummary.bathCount}`}
+            />
+          </View>
+
+          {selectedDayTimeline.length === 0 ? (
+            <Text style={[styles.noEvents, { color: colors.textSecondary }]}>
+              {t('history.noEventsCalendarDay')}
+            </Text>
+          ) : (
+            selectedDayTimeline.map((item) => (
+              <TimelineEntry key={`${item.kind}-${item.id}`} item={item} />
+            ))
+          )}
+        </Card>
+        </View>
+
+        <Text style={[styles.sectionTitle, { color: colors.text, marginTop: spacing.md }]}>
+          {t('history.trends')}
+        </Text>
         {dateRangeLabel ? (
           <Text style={[styles.dateRange, { color: colors.textSecondary }]}>
-            Last {TREND_DAYS} days · {dateRangeLabel}
+            {t('history.lastDays', { count: TREND_DAYS, range: dateRangeLabel })}
           </Text>
         ) : null}
+        <Text style={[styles.chartTapHint, { color: colors.textSecondary }]}>
+          {t('history.chartTapHint')}
+        </Text>
 
         <Card style={styles.chartCard}>
           <View style={styles.chartHeaderRow}>
             <View style={styles.chartTitleBlock}>
-              <Text style={[styles.chartLabel, { color: colors.text }]}>Total sleep</Text>
+              <Text style={[styles.chartLabel, { color: colors.text }]}>{t('history.totalSleep')}</Text>
               <Text style={[styles.chartSub, { color: colors.textSecondary }]}>
-                Per wake day (morning wake → next)
+                {t('history.perCalendarDay')}
               </Text>
             </View>
             <View
@@ -171,7 +271,7 @@ export default function HistoryScreen() {
                   styles.unitChip,
                   sleepUnit === 'hours' && { backgroundColor: colors.tint + '33' },
                 ]}>
-                <Text style={[styles.unitChipText, { color: colors.text }]}>Hours</Text>
+                <Text style={[styles.unitChipText, { color: colors.text }]}>{t('history.hours')}</Text>
               </Pressable>
               <Pressable
                 onPress={() => setSleepUnit('minutes')}
@@ -179,7 +279,9 @@ export default function HistoryScreen() {
                   styles.unitChip,
                   sleepUnit === 'minutes' && { backgroundColor: colors.tint + '33' },
                 ]}>
-                <Text style={[styles.unitChipText, { color: colors.text }]}>Minutes</Text>
+                <Text style={[styles.unitChipText, { color: colors.text }]}>
+                  {t('history.minutes')}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -188,78 +290,73 @@ export default function HistoryScreen() {
             maxValue={sleepMaxValue}
             noOfSections={4}
             yAxisSuffix={sleepUnit === 'hours' ? 'h' : 'm'}
+            onDayPress={jumpToDay}
           />
         </Card>
 
         <Card style={styles.chartCard}>
-          <Text style={[styles.chartLabel, { color: colors.text }]}>Feeds</Text>
-          <Text style={[styles.chartSub, { color: colors.textSecondary }]}>Per calendar day</Text>
-          <TrendBarChart data={feedChartData} maxValue={feedMax} noOfSections={3} />
+          <Text style={[styles.chartLabel, { color: colors.text }]}>{t('history.feeds')}</Text>
+          <Text style={[styles.chartSub, { color: colors.textSecondary }]}>
+            {t('history.perCalendarDay')}
+          </Text>
+          <TrendBarChart data={feedChartData} maxValue={feedMax} noOfSections={3} onDayPress={jumpToDay} />
         </Card>
 
         <Card style={styles.chartCard}>
-          <Text style={[styles.chartLabel, { color: colors.text }]}>Diapers</Text>
-          <Text style={[styles.chartSub, { color: colors.textSecondary }]}>Per calendar day</Text>
-          <TrendBarChart data={diaperChartData} maxValue={diaperMax} noOfSections={3} />
+          <Text style={[styles.chartLabel, { color: colors.text }]}>{t('history.diapers')}</Text>
+          <Text style={[styles.chartSub, { color: colors.textSecondary }]}>
+            {t('history.perCalendarDay')}
+          </Text>
+          <TrendBarChart data={diaperChartData} maxValue={diaperMax} noOfSections={3} onDayPress={jumpToDay} />
         </Card>
 
         <Card style={styles.statsCard}>
-          <Text style={[styles.snapshotTitle, { color: colors.text }]}>Today at a glance</Text>
+          <Text style={[styles.snapshotTitle, { color: colors.text }]}>
+            {t('history.todayGlance')}
+          </Text>
 
           <View style={styles.statGrid}>
             <StatBlock
               colors={colors}
-              label="Sleep (24h)"
-              value={`${Math.floor(sleep24h.total24hMinutes / 60)}h ${sleep24h.total24hMinutes % 60}m`}
-              sub={`Daytime ${Math.floor(sleep24h.daytimeTodayMinutes / 60)}h ${sleep24h.daytimeTodayMinutes % 60}m`}
+              label={t('history.sleepToday')}
+              value={formatSleepDuration(todaySummary.totalSleepMinutes)}
+              sub={t('history.calendarDayTotal')}
             />
             <StatBlock
               colors={colors}
-              label="Last night"
-              value={`${Math.floor(sleep24h.nighttimeLastNightMinutes / 60)}h ${sleep24h.nighttimeLastNightMinutes % 60}m`}
-              sub="8pm – 8am window"
+              label={t('history.lastNight')}
+              value={formatSleepDuration(sleep24h.nighttimeLastNightMinutes)}
+              sub={t('history.lastNightSub')}
             />
             <StatBlock
               colors={colors}
-              label="Naps · bedtime"
-              value={`${todaySleep?.napCount ?? 0} · ${todaySleep?.bedtimeCount ?? 0}`}
+              label={t('history.napsBedtime')}
+              value={`${todaySummary.napCount} · ${todaySummary.bedtimeCount}`}
             />
             <StatBlock
               colors={colors}
-              label="Feeds"
-              value={`${todayFeeding?.totalFeeds ?? 0}`}
-              sub={`B ${todayFeeding?.breast ?? 0} · Bo ${todayFeeding?.bottle ?? 0} · S ${todayFeeding?.solid ?? 0}`}
+              label={t('history.feeds')}
+              value={`${todaySummary.feedCount}`}
+              sub={`B ${todaySummary.breast} · Bo ${todaySummary.bottle} · S ${todaySummary.solid}`}
             />
             <StatBlock
               colors={colors}
-              label="Diapers"
-              value={`${todayDiaper?.total ?? 0}`}
-              sub={`W ${todayDiaper?.wet ?? 0} · D ${todayDiaper?.dirty ?? 0} · M ${todayDiaper?.mixed ?? 0}`}
+              label={t('history.diapers')}
+              value={`${todaySummary.diaperCount}`}
+              sub={`W ${todaySummary.wet} · D ${todaySummary.dirty} · M ${todaySummary.mixed}`}
             />
             <StatBlock
               colors={colors}
-              label="Wake-ups"
-              value={`${wakeTodayCount}`}
+              label={t('history.baths')}
+              value={`${todaySummary.bathCount}`}
+            />
+            <StatBlock
+              colors={colors}
+              label={t('history.wakeUps')}
+              value={`${todaySummary.wakeCount}`}
             />
           </View>
         </Card>
-
-        <Text style={[styles.sectionTitle, { color: colors.text, marginTop: spacing.md }]}>
-          Daily timeline
-        </Text>
-
-        {dayGroups.map(({ date, items }) => (
-          <View key={date} style={styles.dayGroup}>
-            <Text style={[styles.dayHeader, { color: colors.text }]}>
-              {formatDayGroupHeader(date, now)}
-            </Text>
-            {items.length === 0 ? (
-              <Text style={[styles.noEvents, { color: colors.textSecondary }]}>No events</Text>
-            ) : (
-              items.map((item) => <TimelineEntry key={`${item.kind}-${item.id}`} item={item} />)
-            )}
-          </View>
-        ))}
       </ScrollView>
     </SafeAreaView>
   );
@@ -269,7 +366,11 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
   sectionTitle: { fontSize: 22, fontWeight: '700', marginBottom: spacing.xs },
-  dateRange: { fontSize: 14, marginBottom: spacing.lg },
+  sectionHint: { fontSize: 14, lineHeight: 20, marginBottom: spacing.md },
+  calendarHint: { fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
+  chartTapHint: { fontSize: 13, lineHeight: 18, marginBottom: spacing.md },
+  dateRange: { fontSize: 14, marginBottom: spacing.xs },
+  dayCard: { marginBottom: spacing.lg },
   chartCard: { marginBottom: spacing.md, paddingBottom: spacing.sm },
   statsCard: { marginBottom: spacing.md },
   chartLabel: { fontSize: 16, fontWeight: '700' },
@@ -289,6 +390,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+    marginBottom: spacing.md,
   },
   statBlock: {
     width: '48%',
@@ -299,8 +401,6 @@ const styles = StyleSheet.create({
   statBlockLabel: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
   statBlockValue: { fontSize: 18, fontWeight: '700' },
   statBlockSub: { fontSize: 12, marginTop: 4, lineHeight: 16 },
-  dayGroup: { marginBottom: spacing.lg },
-  dayHeader: { fontSize: 15, fontWeight: '700', marginBottom: spacing.sm },
-  noEvents: { fontSize: 14, fontStyle: 'italic', marginLeft: spacing.sm },
+  noEvents: { fontSize: 14, fontStyle: 'italic' },
   empty: { textAlign: 'center', marginTop: spacing.xxl, fontSize: 16, padding: spacing.lg },
 });

@@ -1,6 +1,38 @@
 import type { SleepPause } from '@/types';
 
-/** Elapsed sleep time in ms, excluding pause intervals (timer freezes while paused). */
+/** When baby resumed after a pause, the start of the current asleep stretch. */
+export function getCurrentSegmentStart(
+  sleepStart: Date,
+  sleepEventId: string,
+  pauses: SleepPause[]
+): Date {
+  const completed = pauses
+    .filter((p) => p.sleepEventId === sleepEventId && p.endTime !== null)
+    .sort(
+      (a, b) =>
+        new Date(b.endTime!).getTime() - new Date(a.endTime!).getTime()
+    );
+
+  if (completed.length > 0) {
+    return new Date(completed[0].endTime!);
+  }
+  return sleepStart;
+}
+
+/** Time asleep in the current stretch (since last resume, or since sleep start). */
+export function getCurrentSegmentElapsedMs(
+  sleepStart: Date,
+  now: Date,
+  sleepEventId: string,
+  pauses: SleepPause[],
+  isPaused: boolean
+): number {
+  if (isPaused) return 0;
+  const segmentStart = getCurrentSegmentStart(sleepStart, sleepEventId, pauses);
+  return Math.max(0, now.getTime() - segmentStart.getTime());
+}
+
+/** Total asleep this session in ms, excluding all pause intervals. */
 export function getSleepElapsedMs(
   sleepStart: Date,
   now: Date,

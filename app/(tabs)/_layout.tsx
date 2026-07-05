@@ -4,10 +4,14 @@ import { Platform } from 'react-native';
 
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { useAppStore } from '@/store/useAppStore';
+import { useTranslation } from '@/lib/i18n';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
+  const locale = useAppStore((s) => s.locale);
+  const t = useTranslation(locale);
 
   return (
     <Tabs
@@ -31,8 +35,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Relaxo',
-          tabBarLabel: 'Home',
+          title: t('tabs.appTitle'),
+          tabBarLabel: t('tabs.home'),
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'moon.fill', android: 'bedtime', web: 'bedtime' }}
@@ -45,10 +49,14 @@ export default function TabLayout() {
       <Tabs.Screen
         name="log"
         options={{
-          title: 'Log',
+          title: t('tabs.log'),
           tabBarIcon: ({ color }) => (
             <SymbolView
-              name={{ ios: 'plus.circle.fill', android: 'add_circle', web: 'add_circle' }}
+              name={{
+                ios: 'list.bullet.rectangle.fill',
+                android: 'format_list_bulleted',
+                web: 'format_list_bulleted',
+              }}
               tintColor={color}
               size={26}
             />
@@ -58,7 +66,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="history"
         options={{
-          title: 'History',
+          title: t('tabs.history'),
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'chart.bar.fill', android: 'bar_chart', web: 'bar_chart' }}
@@ -69,9 +77,26 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="tasks"
+        options={{
+          title: t('tabs.tasks'),
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{
+                ios: 'checklist',
+                android: 'checklist',
+                web: 'checklist',
+              }}
+              tintColor={color}
+              size={26}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
+          title: t('tabs.profile'),
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'person.fill', android: 'person', web: 'person' }}

@@ -5,30 +5,32 @@ import {
   StyleSheet,
   FlatList,
   Alert,
-  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, spacing } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
-import { DatePickerField } from '@/components/DatePickerField';
+import { WakeDayPicker } from '@/components/WakeDayPicker';
 import { TimelineEntry } from '@/components/TimelineEntry';
 import { FeedingLogModal } from '@/components/FeedingLogModal';
 import { DiaperLogModal } from '@/components/DiaperLogModal';
+import { BathLogModal } from '@/components/BathLogModal';
 import { SleepLogModal } from '@/components/SleepLogModal';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
-import { buildTimeline, filterTimelineForWakeDay } from '@/lib/timeline';
-import { getWakeDayBounds, formatWakeDayRange } from '@/lib/dayAnchor';
-import { isSameDay, startOfDay } from '@/lib/dateUtils';
-import type { DiaperEvent, FeedingEvent, SleepEvent, TimelineItem } from '@/types';
+import { useTranslation } from '@/lib/i18n';
+import { buildTimeline, filterTimelineForDayView } from '@/lib/timeline';
+import type { BathEvent, DiaperEvent, FeedingEvent, SleepEvent, TimelineItem } from '@/types';
 
 export default function LogScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+  const locale = useAppStore((s) => s.locale);
+  const t = useTranslation(locale);
 
   const events = useAppStore((s) => s.events);
   const feedings = useAppStore((s) => s.feedings);
   const diapers = useAppStore((s) => s.diapers);
+  const baths = useAppStore((s) => s.baths);
   const wakes = useAppStore((s) => s.wakes);
   const removeSleepEvent = useAppStore((s) => s.removeSleepEvent);
   const addSleepEvent = useAppStore((s) => s.addSleepEvent);
@@ -38,45 +40,43 @@ export default function LogScreen() {
   const removeWake = useAppStore((s) => s.removeWake);
   const editDiaper = useAppStore((s) => s.editDiaper);
   const addDiaper = useAppStore((s) => s.addDiaper);
+  const addBath = useAppStore((s) => s.addBath);
+  const editBath = useAppStore((s) => s.editBath);
+  const removeBath = useAppStore((s) => s.removeBath);
   const baby = useActiveBaby();
 
   const [feedingOpen, setFeedingOpen] = useState(false);
   const [diaperOpen, setDiaperOpen] = useState(false);
+  const [bathOpen, setBathOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
-  const [selectedWakeDay, setSelectedWakeDay] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState(new Date());
   const [editingSleep, setEditingSleep] = useState<SleepEvent | null>(null);
   const [editingFeeding, setEditingFeeding] = useState<FeedingEvent | null>(null);
   const [editingDiaper, setEditingDiaper] = useState<DiaperEvent | null>(null);
+  const [editingBath, setEditingBath] = useState<BathEvent | null>(null);
 
   const now = useMemo(() => new Date(), []);
 
-  const wakeDayBounds = useMemo(
-    () => getWakeDayBounds(events, wakes, selectedWakeDay, now),
-    [events, wakes, selectedWakeDay, now]
-  );
-
   const timeline = useMemo(
     () =>
-      filterTimelineForWakeDay(
-        buildTimeline(events, feedings, diapers, wakes),
+      filterTimelineForDayView(
+        buildTimeline(events, feedings, diapers, baths, wakes),
         events,
         wakes,
-        selectedWakeDay,
+        selectedDay,
         now
       ),
-    [events, feedings, diapers, wakes, selectedWakeDay, now]
+    [events, feedings, diapers, baths, wakes, selectedDay, now]
   );
 
-  const shiftWakeDay = (delta: number) => {
-    const next = new Date(selectedWakeDay);
-    next.setDate(next.getDate() + delta);
-    const today = startOfDay(new Date());
-    if (startOfDay(next).getTime() > today.getTime()) return;
-    setSelectedWakeDay(next);
-  };
-
   const handleDelete = (item: TimelineItem) => {
-    const labels = { sleep: 'sleep', feeding: 'feeding', diaper: 'diaper', wake: 'wake' };
+    const labels = {
+      sleep: 'sleep',
+      feeding: 'feeding',
+      diaper: 'diaper',
+      bath: 'bath',
+      wake: 'wake',
+    };
     Alert.alert('Delete entry', `Remove this ${labels[item.kind]} event?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -86,6 +86,7 @@ export default function LogScreen() {
           if (item.kind === 'sleep') removeSleepEvent(item.id);
           if (item.kind === 'feeding') removeFeeding(item.id);
           if (item.kind === 'diaper') removeDiaper(item.id);
+          if (item.kind === 'bath') removeBath(item.id);
           if (item.kind === 'wake') removeWake(item.id);
         },
       },
@@ -102,6 +103,9 @@ export default function LogScreen() {
     } else if (item.kind === 'diaper') {
       setEditingDiaper(item.data);
       setDiaperOpen(true);
+    } else if (item.kind === 'bath') {
+      setEditingBath(item.data);
+      setBathOpen(true);
     } else if (item.kind === 'wake') {
       Alert.alert('Wake event', 'Wake events can be deleted with a long press.');
     }
@@ -111,13 +115,11 @@ export default function LogScreen() {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={[styles.empty, { color: colors.textSecondary }]}>
-          Set up a baby profile to log events.
+          {t('log.setupProfile')}
         </Text>
       </SafeAreaView>
     );
   }
-
-  const canGoForward = !isSameDay(selectedWakeDay, new Date());
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -127,67 +129,53 @@ export default function LogScreen() {
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <View>
-            <View style={styles.wakeDayNav}>
-              <Pressable
-                onPress={() => shiftWakeDay(-1)}
-                style={[styles.navBtn, { borderColor: colors.border }]}>
-                <Text style={[styles.navBtnText, { color: colors.text }]}>‹</Text>
-              </Pressable>
-              <View style={styles.wakeDayCenter}>
-                <DatePickerField
-                  label="Wake day"
-                  value={selectedWakeDay}
-                  onChange={setSelectedWakeDay}
-                  maximumDate={new Date()}
-                  style={{ marginBottom: 0 }}
-                />
-              </View>
-              <Pressable
-                onPress={() => shiftWakeDay(1)}
-                disabled={!canGoForward}
-                style={[
-                  styles.navBtn,
-                  {
-                    borderColor: colors.border,
-                    opacity: canGoForward ? 1 : 0.35,
-                  },
-                ]}>
-                <Text style={[styles.navBtnText, { color: colors.text }]}>›</Text>
-              </Pressable>
-            </View>
-            <Text style={[styles.wakeDayRange, { color: colors.textSecondary }]}>
-              {formatWakeDayRange(wakeDayBounds.start, wakeDayBounds.end)}
-            </Text>
+            <WakeDayPicker
+              label={t('log.day')}
+              selectedDay={selectedDay}
+              onSelectedDayChange={setSelectedDay}
+              events={events}
+              wakes={wakes}
+              now={now}
+            />
             <Text style={[styles.wakeDayHint, { color: colors.textSecondary }]}>
-              Shows everything from morning wake until the next one — not midnight to midnight.
+              {t('log.dayHint')}
             </Text>
             <View style={styles.headerActions}>
               <BigButton
-                title="+ Sleep"
+                title={t('log.addSleep')}
                 variant="secondary"
                 onPress={() => {
                   setEditingSleep(null);
                   setSleepOpen(true);
                 }}
-                style={{ flex: 1, marginRight: spacing.xs }}
+                style={styles.actionBtn}
               />
               <BigButton
-                title="+ Feeding"
+                title={t('log.addFeeding')}
                 variant="secondary"
                 onPress={() => {
                   setEditingFeeding(null);
                   setFeedingOpen(true);
                 }}
-                style={{ flex: 1, marginHorizontal: spacing.xs }}
+                style={styles.actionBtn}
               />
               <BigButton
-                title="+ Diaper"
+                title={t('log.addDiaper')}
                 variant="secondary"
                 onPress={() => {
                   setEditingDiaper(null);
                   setDiaperOpen(true);
                 }}
-                style={{ flex: 1, marginLeft: spacing.xs }}
+                style={styles.actionBtn}
+              />
+              <BigButton
+                title={t('log.addBath')}
+                variant="secondary"
+                onPress={() => {
+                  setEditingBath(null);
+                  setBathOpen(true);
+                }}
+                style={styles.actionBtn}
               />
             </View>
           </View>
@@ -201,7 +189,9 @@ export default function LogScreen() {
         )}
         ListEmptyComponent={
           <Text style={[styles.empty, { color: colors.textSecondary }]}>
-            No events in this wake-day. Tap + Sleep, + Feeding, or + Diaper to log.
+            {t('log.noEvents')}
+            {'\n'}
+            {t('log.noEventsHint')}
           </Text>
         }
       />
@@ -247,6 +237,22 @@ export default function LogScreen() {
           setEditingDiaper(null);
         }}
       />
+
+      <BathLogModal
+        visible={bathOpen}
+        initial={editingBath}
+        babyId={baby.id}
+        onSave={async (payload) => {
+          if (editingBath) await editBath({ ...payload, id: editingBath.id });
+          else await addBath(payload);
+          setBathOpen(false);
+          setEditingBath(null);
+        }}
+        onClose={() => {
+          setBathOpen(false);
+          setEditingBath(null);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -254,25 +260,17 @@ export default function LogScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  wakeDayNav: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  wakeDayCenter: { flex: 1 },
-  navBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  navBtnText: { fontSize: 28, fontWeight: '300', lineHeight: 32 },
-  wakeDayRange: { fontSize: 14, marginBottom: spacing.xs },
   wakeDayHint: { fontSize: 13, lineHeight: 18, marginBottom: spacing.lg },
-  headerActions: { flexDirection: 'row', marginBottom: spacing.lg },
+  headerActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  actionBtn: {
+    flexGrow: 1,
+    flexBasis: '47%',
+    minWidth: '47%',
+  },
   empty: { textAlign: 'center', marginTop: spacing.xxl, fontSize: 16 },
 });

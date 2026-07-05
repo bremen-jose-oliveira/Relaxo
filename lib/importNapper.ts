@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
-import type { DiaperEvent, FeedingEvent, SleepEvent, WakeEvent } from '@/types';
+import type { BathEvent, DiaperEvent, FeedingEvent, SleepEvent, WakeEvent } from '@/types';
+import { isArtificial24hNightSleep, isInstantSleepMarker } from '@/lib/sleepTotals';
 
 export type ColumnMapping = {
   startTime: string;
@@ -28,7 +29,7 @@ export type ParsedCsv = {
   rows: Record<string, string>[];
 };
 
-export type ImportEventKind = 'sleep' | 'feeding' | 'diaper' | 'wake';
+export type ImportEventKind = 'sleep' | 'feeding' | 'diaper' | 'bath' | 'wake';
 
 export type ImportRowOutcome =
   | 'ready'
@@ -44,6 +45,7 @@ export type MappedImportRow = {
   sleepEvent?: Omit<SleepEvent, 'id'>;
   feedingEvent?: Omit<FeedingEvent, 'id'>;
   diaperEvent?: Omit<DiaperEvent, 'id'>;
+  bathEvent?: Omit<BathEvent, 'id'>;
   wakeEvent?: Omit<WakeEvent, 'id'>;
   sleepPauses?: { startTime: string; endTime: string | null }[];
   rawType?: string;
@@ -66,6 +68,7 @@ export type ImportPreview = {
   feedingReadyCount: number;
   feedingOngoingCount: number;
   diaperReadyCount: number;
+  bathReadyCount: number;
   wakeReadyCount: number;
   skippedUnrecognized: number;
   skippedFailed: number;
@@ -108,6 +111,7 @@ const BOTTLE_PATTERNS = [/bottle/i, /formula/i, /expressed/i];
 const SOLID_PATTERNS = [/solid/i, /food/i, /puree/i, /meal/i, /weaning/i];
 
 const DIAPER_PATTERNS = [/diaper/i, /nappy/i, /wet/i, /dirty/i, /poo/i, /stool/i, /soiled/i, /mixed/i, /bm/i];
+const BATH_PATTERNS = [/bath/i, /\btub\b/i, /shower/i];
 const WET_PATTERNS = [/wet/i, /pee/i, /wee/i, /urin/i];
 const DIRTY_PATTERNS = [/dirty/i, /poo/i, /stool/i, /soiled/i, /\bbm\b/i];
 const MIXED_PATTERNS = [/mixed/i, /both/i];
@@ -139,6 +143,7 @@ type RowClassification =
   | { category: 'sleep'; sleepType: 'nap' | 'night' }
   | { category: 'feeding'; feedType: 'breast' | 'bottle' | 'solid' }
   | { category: 'diaper'; diaperType: 'wet' | 'dirty' | 'mixed' }
+  | { category: 'bath' }
   | { category: 'wake' }
   | { category: 'unrecognized' };
 
@@ -263,6 +268,8 @@ export function classifyRow(raw: string): RowClassification {
   if (UNRECOGNIZED_PATTERNS.some((p) => p.test(value))) {
     return { category: 'unrecognized' };
   }
+
+  if (BATH_PATTERNS.some((p) => p.test(value))) return { category: 'bath' };
 
   if (DIAPER_PATTERNS.some((p) => p.test(value))) {
     if (MIXED_PATTERNS.some((p) => p.test(value))) return { category: 'diaper', diaperType: 'mixed' };
@@ -437,6 +444,9 @@ function resolveEndTime(
     return { endTime: null, outcome: 'skipped_parse_error', reason: `Could not parse end time: "${endRaw}"` };
   }
   if (endDate.getTime() <= startDate.getTime()) {
+    if (endDate.getTime() === startDate.getTime()) {
+      return { endTime: startDate.toISOString(), outcome: 'ready' };
+    }
     const nextDay = new Date(endDate);
     nextDay.setDate(nextDay.getDate() + 1);
     if (nextDay.getTime() > startDate.getTime()) endDate = nextDay;
@@ -473,6 +483,9 @@ export function mapImportRow(
   if (classification.category === 'diaper' && !startRaw && datePart) {
     startRaw = datePart;
   }
+  if (classification.category === 'bath' && !startRaw && datePart) {
+    startRaw = datePart;
+  }
 
   const startDate = parseDateTime(startRaw, datePart);
 
@@ -502,6 +515,27 @@ export function mapImportRow(
         kind: 'diaper',
         label: classification.diaperType,
         start: formatPreviewTime(diaperEvent.time),
+        end: '—',
+      },
+    };
+  }
+
+  if (classification.category === 'bath') {
+    const bathEvent: Omit<BathEvent, 'id'> = {
+      babyId,
+      time: startDate.toISOString(),
+      notes: mapping.notes ? row[mapping.notes]?.trim() || null : null,
+    };
+    return {
+      rowIndex,
+      outcome: 'ready',
+      eventKind: 'bath',
+      bathEvent,
+      rawType,
+      preview: {
+        kind: 'bath',
+        label: 'bath',
+        start: formatPreviewTime(bathEvent.time),
         end: '—',
       },
     };
@@ -643,6 +677,7 @@ function summarizePreview(rows: MappedImportRow[]): Omit<
     feedingReadyCount: rows.filter((r) => r.eventKind === 'feeding' && r.outcome === 'ready').length,
     feedingOngoingCount: rows.filter((r) => r.eventKind === 'feeding' && r.outcome === 'ongoing').length,
     diaperReadyCount: rows.filter((r) => r.eventKind === 'diaper' && r.outcome === 'ready').length,
+    bathReadyCount: rows.filter((r) => r.eventKind === 'bath' && r.outcome === 'ready').length,
     wakeReadyCount: rows.filter((r) => r.eventKind === 'wake' && r.outcome === 'ready').length,
     skippedUnrecognized: rows.filter((r) => r.outcome === 'skipped_unrecognized').length,
     skippedFailed: rows.filter((r) => r.outcome === 'skipped_parse_error').length,
@@ -706,10 +741,36 @@ export function prepareImportFromCsv(
   return { parsed, autoDetect, needsManualMapping: true };
 }
 
+export function stitchNapperBedtimes(
+  sleep: Omit<SleepEvent, 'id'>[],
+  wakes: Omit<WakeEvent, 'id'>[]
+): Omit<SleepEvent, 'id'>[] {
+  const morningWakeTimes = wakes
+    .filter((w) => w.wakeType === 'morning')
+    .map((w) => new Date(w.time).getTime())
+    .sort((a, b) => a - b);
+
+  return sleep.map((event) => {
+    if (event.type !== 'night' || !event.endTime) return event;
+
+    const startMs = new Date(event.startTime).getTime();
+    const isInstant = isInstantSleepMarker(event);
+    const isArtificial24h = isArtificial24hNightSleep(event);
+
+    if (!isInstant && !isArtificial24h) return event;
+
+    const nextMorning = morningWakeTimes.find((t) => t > startMs);
+    if (!nextMorning) return event;
+
+    return { ...event, endTime: new Date(nextMorning).toISOString() };
+  });
+}
+
 export function getImportableEvents(preview: ImportPreview): {
   sleep: Omit<SleepEvent, 'id'>[];
   feedings: Omit<FeedingEvent, 'id'>[];
   diapers: Omit<DiaperEvent, 'id'>[];
+  baths: Omit<BathEvent, 'id'>[];
   wakes: Omit<WakeEvent, 'id'>[];
   sleepPauses: {
     sleepStartTime: string;
@@ -719,6 +780,7 @@ export function getImportableEvents(preview: ImportPreview): {
   const sleep: Omit<SleepEvent, 'id'>[] = [];
   const feedings: Omit<FeedingEvent, 'id'>[] = [];
   const diapers: Omit<DiaperEvent, 'id'>[] = [];
+  const baths: Omit<BathEvent, 'id'>[] = [];
   const wakes: Omit<WakeEvent, 'id'>[] = [];
   const sleepPauses: {
     sleepStartTime: string;
@@ -738,10 +800,18 @@ export function getImportableEvents(preview: ImportPreview): {
     }
     if (row.feedingEvent) feedings.push(row.feedingEvent);
     if (row.diaperEvent) diapers.push(row.diaperEvent);
+    if (row.bathEvent) baths.push(row.bathEvent);
     if (row.wakeEvent) wakes.push(row.wakeEvent);
   }
 
-  return { sleep, feedings, diapers, wakes, sleepPauses };
+  return {
+    sleep: stitchNapperBedtimes(sleep, wakes),
+    feedings,
+    diapers,
+    baths,
+    wakes,
+    sleepPauses,
+  };
 }
 
 export const MAPPING_FIELD_LABELS: Record<MappingField, string> = {

@@ -10,6 +10,9 @@ const baby: Baby = {
   name: 'Test Baby',
   birthDate: '2025-03-01',
   napGoal: null,
+  trackFeedingDuration: false,
+  easilyOverstimulated: false,
+  highNeed: false,
 };
 
 function makeEvent(
