@@ -8,6 +8,7 @@ import type { BathEvent } from '@/types';
 import { DatePickerField } from '@/components/DatePickerField';
 import { useAppStore } from '@/store/useAppStore';
 import { useTranslation } from '@/lib/i18n';
+import { formatLastCareWhen, getLastBath } from '@/lib/lastCareEvents';
 
 type Props = {
   visible: boolean;
@@ -21,6 +22,7 @@ export function BathLogModal({ visible, initial, babyId, onSave, onClose }: Prop
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const locale = useAppStore((s) => s.locale);
+  const baths = useAppStore((s) => s.baths);
   const t = useTranslation(locale);
   const [time, setTime] = useState(new Date());
 
@@ -31,6 +33,14 @@ export function BathLogModal({ visible, initial, babyId, onSave, onClose }: Prop
   }, [visible, initial]);
 
   if (!visible) return null;
+
+  const lastBath = getLastBath(baths, initial?.id);
+  const lastWhen = lastBath
+    ? formatLastCareWhen(lastBath.time, {
+        today: t('common.today'),
+        yesterday: t('common.yesterday'),
+      })
+    : null;
 
   const save = () => {
     onSave({
@@ -46,6 +56,12 @@ export function BathLogModal({ visible, initial, babyId, onSave, onClose }: Prop
         <Text style={[styles.title, { color: colors.text }]}>
           {initial ? t('bath.editTitle') : t('bath.title')}
         </Text>
+
+        {lastWhen ? (
+          <Text style={[styles.lastHint, { color: colors.textSecondary }]}>
+            {t('bath.lastBath', { when: lastWhen })}
+          </Text>
+        ) : null}
 
         <DatePickerField
           label={t('bath.time')}
@@ -74,6 +90,11 @@ export function BathLogModal({ visible, initial, babyId, onSave, onClose }: Prop
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: spacing.lg },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: spacing.lg },
+  title: { fontSize: 24, fontWeight: '700', marginBottom: spacing.sm },
+  lastHint: {
+    fontSize: 15,
+    marginBottom: spacing.lg,
+    lineHeight: 22,
+  },
   actions: { flexDirection: 'row', marginTop: spacing.xl },
 });

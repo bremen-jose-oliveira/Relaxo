@@ -28,7 +28,9 @@ import {
 import { getCurrentSegmentStart } from '@/lib/elapsedTime';
 import { getOngoingPause } from '@/lib/sleepPauses';
 import { SleepTimer } from '@/components/SleepTimer';
-import { formatNapScheduleLabel } from '@/lib/napSchedule';
+import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
+import { getTypicalSleepSchedule } from '@/lib/sleepPatterns';
+import { UsualSleepTimes } from '@/components/UsualSleepTimes';
 import { formatTime } from '@/lib/dateUtils';
 import { useTranslation } from '@/lib/i18n';
 import { useRouter } from 'expo-router';
@@ -118,6 +120,11 @@ export default function HomeScreen() {
 
   const sleepType = ongoing?.type ?? 'nap';
   const sleepTypeLabel = sleepType === 'night' ? t('home.bedtime') : t('home.nap');
+
+  const napGoal =
+    prediction?.resolvedNapGoal ??
+    resolveNapGoal(baby, events, wakes, new Date()).goal;
+  const usualSchedule = getTypicalSleepSchedule(events, wakes, new Date(), napGoal);
 
   return (
     <SafeAreaView
@@ -236,6 +243,17 @@ export default function HomeScreen() {
               </Text>
             </View>
           )}
+
+          {usualSchedule.length > 0 ? (
+            <Card style={styles.usualCard}>
+              <UsualSleepTimes
+                schedule={usualSchedule}
+                title={t('home.usualTimes')}
+                subtitle={t('history.usualTimesSub')}
+                colors={colors}
+              />
+            </Card>
+          ) : null}
         </View>
 
         <View style={[styles.insightWrap, { borderTopColor: colors.border }]}>
@@ -379,6 +397,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     alignItems: 'center',
     paddingVertical: spacing.md,
+  },
+  usualCard: {
+    width: '100%',
+    marginTop: spacing.md,
   },
   predictionLabel: {
     fontSize: 15,

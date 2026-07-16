@@ -20,6 +20,9 @@ import {
 import { buildTimeline, filterTimelineForDayView } from '@/lib/timeline';
 import { formatSleepDuration, getWakeDaySummary } from '@/lib/daySummary';
 import { parseDateKey } from '@/lib/dateUtils';
+import { resolveNapGoal } from '@/lib/napSchedule';
+import { getTypicalSleepSchedule } from '@/lib/sleepPatterns';
+import { UsualSleepTimes } from '@/components/UsualSleepTimes';
 import { useTranslation } from '@/lib/i18n';
 
 const TREND_DAYS = 14;
@@ -124,6 +127,12 @@ export default function HistoryScreen() {
     () => getSleepMetrics24h(events, sleepPauses, now),
     [events, sleepPauses, now]
   );
+
+  const usualSchedule = useMemo(() => {
+    if (!baby) return [];
+    const { goal } = resolveNapGoal(baby, events, wakes, now);
+    return getTypicalSleepSchedule(events, wakes, now, goal);
+  }, [baby, events, wakes, now]);
 
   const dateRangeLabel = useMemo(() => {
     if (sleepTrend.length === 0) return '';
@@ -251,6 +260,17 @@ export default function HistoryScreen() {
         <Text style={[styles.chartTapHint, { color: colors.textSecondary }]}>
           {t('history.chartTapHint')}
         </Text>
+
+        {usualSchedule.length > 0 ? (
+          <Card style={styles.chartCard}>
+            <UsualSleepTimes
+              schedule={usualSchedule}
+              title={t('history.usualTimes')}
+              subtitle={t('history.usualTimesSub')}
+              colors={colors}
+            />
+          </Card>
+        ) : null}
 
         <Card style={styles.chartCard}>
           <View style={styles.chartHeaderRow}>
