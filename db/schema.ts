@@ -1,4 +1,4 @@
-import { sqliteTable, text, real, integer, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, real, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const babies = sqliteTable('babies', {
   id: text('id').primaryKey().notNull(),
@@ -29,6 +29,9 @@ export const sleepEvents = sqliteTable(
     type: text('type', { enum: ['nap', 'night'] }).notNull(),
     startTime: text('start_time').notNull(),
     endTime: text('end_time'),
+    extension: text('extension', {
+      enum: ['independent', 'feeding', 'rocking', 'contact', 'not_extended'],
+    }),
   },
   (table) => [
     index('idx_sleep_events_baby').on(table.babyId),
@@ -156,6 +159,47 @@ export const dailyChoreCompletions = sqliteTable(
   ]
 );
 
+export const dayContextTags = sqliteTable(
+  'day_context_tags',
+  {
+    id: text('id').primaryKey().notNull(),
+    babyId: text('baby_id')
+      .notNull()
+      .references(() => babies.id),
+    dateKey: text('date_key').notNull(),
+    tag: text('tag', {
+      enum: [
+        'outing',
+        'visitors',
+        'cafe',
+        'transit',
+        'car',
+        'vaccination',
+        'sick',
+        'teething',
+        'baby_class',
+        'shopping',
+        'park',
+        'quiet_home',
+        'travel',
+      ],
+    }).notNull(),
+  },
+  (table) => [
+    index('idx_day_context_tags_baby').on(table.babyId),
+    index('idx_day_context_tags_date').on(table.dateKey),
+    uniqueIndex('idx_day_context_tags_unique').on(table.babyId, table.dateKey, table.tag),
+  ]
+);
+
+/** Local-only sync metadata (not mirrored as a household data table). */
+export const syncState = sqliteTable('sync_state', {
+  id: text('id').primaryKey().notNull(),
+  householdId: text('household_id'),
+  inviteCode: text('invite_code'),
+  lastSyncedAt: text('last_synced_at'),
+});
+
 export type BabyRow = typeof babies.$inferSelect;
 export type AppSettingsRow = typeof appSettings.$inferSelect;
 export type SleepEventRow = typeof sleepEvents.$inferSelect;
@@ -176,3 +220,5 @@ export type DailyChoreRow = typeof dailyChores.$inferSelect;
 export type DailyChoreInsert = typeof dailyChores.$inferInsert;
 export type DailyChoreCompletionRow = typeof dailyChoreCompletions.$inferSelect;
 export type DailyChoreCompletionInsert = typeof dailyChoreCompletions.$inferInsert;
+export type DayContextTagRow = typeof dayContextTags.$inferSelect;
+export type DayContextTagInsert = typeof dayContextTags.$inferInsert;

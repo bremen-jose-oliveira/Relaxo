@@ -62,6 +62,10 @@ create table if not exists public.sleep_events (
   type text not null check (type in ('nap', 'night')),
   start_time text not null,
   end_time text,
+  extension text check (
+    extension is null
+    or extension in ('independent', 'feeding', 'rocking', 'contact', 'not_extended')
+  ),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz
 );
@@ -163,6 +167,25 @@ create table if not exists public.daily_chore_completions (
 
 create index if not exists idx_chore_completions_household on public.daily_chore_completions (household_id);
 
+create table if not exists public.day_context_tags (
+  id text primary key,
+  household_id uuid not null references public.households (id) on delete cascade,
+  baby_id text not null,
+  date_key text not null,
+  tag text not null check (
+    tag in (
+      'outing', 'visitors', 'cafe', 'transit', 'car', 'vaccination', 'sick',
+      'teething', 'baby_class', 'shopping', 'park', 'quiet_home', 'travel'
+    )
+  ),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  unique (household_id, baby_id, date_key, tag)
+);
+
+create index if not exists idx_day_context_tags_household on public.day_context_tags (household_id);
+create index if not exists idx_day_context_tags_baby_date on public.day_context_tags (baby_id, date_key);
+
 -- Auto-create profile on signup
 create or replace function public.handle_new_user()
 returns trigger
@@ -199,6 +222,7 @@ alter table public.bath_events enable row level security;
 alter table public.wake_events enable row level security;
 alter table public.daily_chores enable row level security;
 alter table public.daily_chore_completions enable row level security;
+alter table public.day_context_tags enable row level security;
 
 create policy "profiles_select_own" on public.profiles
   for select using (id = auth.uid());
@@ -253,5 +277,9 @@ create policy "daily_chores_all" on public.daily_chores
   with check (household_id in (select public.user_household_ids()));
 
 create policy "daily_chore_completions_all" on public.daily_chore_completions
+  for all using (household_id in (select public.user_household_ids()))
+  with check (household_id in (select public.user_household_ids()));
+
+create policy "day_context_tags_all" on public.day_context_tags
   for all using (household_id in (select public.user_household_ids()))
   with check (household_id in (select public.user_household_ids()));

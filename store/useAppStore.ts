@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { newId } from '@/lib/newId';
-import type { Baby, BathEvent, ChoreRecurrence, DailyChore, DiaperEvent, FeedingEvent, SleepEvent, SleepPause, WakeEvent, AppLocale } from '@/types';
+import type { Baby, BathEvent, ChoreRecurrence, DailyChore, DayContextTag, DayContextTagEvent, DiaperEvent, FeedingEvent, NapExtension, SleepEvent, SleepPause, WakeEvent, AppLocale } from '@/types';
 import {
   bulkInsertBathEvents,
   bulkInsertDiaperEvents,
@@ -18,6 +18,7 @@ import {
   getBathEventsForBaby,
   getDailyChoreCompletionsForDate,
   getDailyChoresForBaby,
+  getDayContextTagsForBaby,
   getDiaperEventsForBaby,
   getFeedingEventsForBaby,
   getSleepEventsForBaby,
@@ -33,6 +34,7 @@ import {
   insertSleepPause,
   insertWakeEvent,
   setDailyChoreCompleted,
+  toggleDayContextTag,
   updateBathEvent,
   updateDiaperEvent,
   updateFeedingEvent,
@@ -66,6 +68,7 @@ type AppState = {
   diapers: DiaperEvent[];
   baths: BathEvent[];
   wakes: WakeEvent[];
+  dayContextTags: DayContextTagEvent[];
   dailyChores: DailyChore[];
   completedChoreIdsToday: string[];
   prediction: PredictResult | null;
@@ -79,12 +82,14 @@ type AppState = {
   setLocale: (locale: AppLocale) => Promise<void>;
   refreshEvents: () => Promise<void>;
   startSleep: (type: 'nap' | 'night') => Promise<void>;
-  endSleep: () => Promise<void>;
+  endSleep: () => Promise<SleepEvent | null>;
+  setSleepExtension: (eventId: string, extension: NapExtension) => Promise<void>;
   pauseSleep: () => Promise<void>;
   resumeSleep: () => Promise<void>;
   addSleepEvent: (event: Omit<SleepEvent, 'id'>) => Promise<SleepEvent>;
   editSleepEvent: (event: SleepEvent) => Promise<void>;
   removeSleepEvent: (id: string) => Promise<void>;
+  toggleDayTag: (dateKey: string, tag: DayContextTag) => Promise<void>;
   startBreastFeed: (side: FeedingEvent['side']) => Promise<void>;
   endBreastFeed: () => Promise<void>;
   addFeeding: (event: Omit<FeedingEvent, 'id'>) => Promise<FeedingEvent>;
@@ -124,6 +129,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   diapers: [],
   baths: [],
   wakes: [],
+  dayContextTags: [],
   dailyChores: [],
   completedChoreIdsToday: [],
   prediction: null,
@@ -181,15 +187,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   refreshEvents: async () => {
     const { activeBabyId } = get();
     if (!activeBabyId) return;
-    const [events, sleepPauses, feedings, diapers, baths, wakes] = await Promise.all([
+    const [events, sleepPauses, feedings, diapers, baths, wakes, dayContextTags] = await Promise.all([
       getSleepEventsForBaby(activeBabyId),
       getSleepPausesForBaby(activeBabyId),
       getFeedingEventsForBaby(activeBabyId),
       getDiaperEventsForBaby(activeBabyId),
       getBathEventsForBaby(activeBabyId),
       getWakeEventsForBaby(activeBabyId),
+      getDayContextTagsForBaby(activeBabyId),
     ]);
-    set({ events, sleepPauses, feedings, diapers, baths, wakes });
+    set({ events, sleepPauses, feedings, diapers, baths, wakes, dayContextTags });
     await get().recomputePrediction();
   },
 
@@ -202,6 +209,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       type,
       startTime: new Date().toISOString(),
       endTime: null,
+      extension: null,
     };
     await insertSleepEvent(event);
     await get().refreshEvents();
@@ -210,13 +218,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   endSleep: async () => {
     const { activeBabyId, events } = get();
     const ongoing = isCurrentlyAsleep(events);
-    if (!ongoing || !activeBabyId) return;
+    if (!ongoing || !activeBabyId) return null;
     const openPause = getOngoingPause(get().sleepPauses, ongoing.id);
     if (openPause) {
       await updateSleepPause({ ...openPause, endTime: new Date().toISOString() });
     }
     const endTime = new Date().toISOString();
-    await updateSleepEvent({ ...ongoing, endTime });
+    const ended: SleepEvent = { ...ongoing, endTime };
+    await updateSleepEvent(ended);
+    await get().refreshEvents();
+    return ended;
+  },
+
+  setSleepExtension: async (eventId, extension) => {
+    const event = get().events.find((e) => e.id === eventId);
+    if (!event) return;
+    await updateSleepEvent({ ...event, extension });
     await get().refreshEvents();
   },
 
@@ -256,6 +273,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeSleepEvent: async (id) => {
     await deleteSleepEvent(id);
     await get().refreshEvents();
+  },
+
+  toggleDayTag: async (dateKey, tag) => {
+    const { activeBabyId } = get();
+    if (!activeBabyId) return;
+    await toggleDayContextTag(activeBabyId, dateKey, tag);
+    const dayContextTags = await getDayContextTagsForBaby(activeBabyId);
+    set({ dayContextTags });
   },
 
   startBreastFeed: async (side) => {

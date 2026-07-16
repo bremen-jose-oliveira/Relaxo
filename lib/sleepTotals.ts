@@ -4,7 +4,7 @@ import { minutesBetween } from '@/lib/dateUtils';
 const INSTANT_SLEEP_MS = 60_000;
 
 /** Napper-style instant BED_TIME row (start ≈ end) — not real sleep duration. */
-export function isInstantSleepMarker(event: SleepEvent): boolean {
+export function isInstantSleepMarker(event: Pick<SleepEvent, 'startTime' | 'endTime'>): boolean {
   if (!event.endTime) return false;
   const durationMs =
     new Date(event.endTime).getTime() - new Date(event.startTime).getTime();
@@ -12,7 +12,9 @@ export function isInstantSleepMarker(event: SleepEvent): boolean {
 }
 
 /** Import artifact: ~24h night with same clock time next day. */
-export function isArtificial24hNightSleep(event: SleepEvent): boolean {
+export function isArtificial24hNightSleep(
+  event: Pick<SleepEvent, 'type' | 'startTime' | 'endTime'>
+): boolean {
   if (event.type !== 'night' || !event.endTime) return false;
   const start = new Date(event.startTime);
   const end = new Date(event.endTime);

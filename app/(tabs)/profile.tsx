@@ -21,7 +21,9 @@ import { DatePickerField } from '@/components/DatePickerField';
 import { ImportPreviewModal } from '@/components/ImportPreviewModal';
 import type { AppLocale, NapGoal } from '@/types';
 import { ageInWeeks, formatDateKey, formatTime } from '@/lib/dateUtils';
+import { formatBabyAge } from '@/lib/sleepInsights';
 import { getAgeWakeWindowRange } from '@/lib/predictNextSleep';
+import { resolveLocale, useTranslation } from '@/lib/i18n';
 import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
 import {
   prepareImportFromCsv,
@@ -37,7 +39,6 @@ import {
   getExportSummary,
 } from '@/lib/exportCareData';
 import { shareCsvFile } from '@/lib/shareCsvFile';
-import { useTranslation } from '@/lib/i18n';
 import {
   checkAndDownloadUpdate,
   formatUpdateId,
@@ -47,6 +48,7 @@ import {
 } from '@/lib/appUpdates';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { useAuthStore } from '@/store/useAuthStore';
+import { useRouter } from 'expo-router';
 
 const ROUTINE_NAP_OPTIONS: NapGoal[] = [2, 3, 4];
 
@@ -79,6 +81,7 @@ export default function ProfileScreen() {
   const signOutCloud = useAuthStore((s) => s.signOut);
   const syncNow = useAuthStore((s) => s.syncNow);
   const joinWithCode = useAuthStore((s) => s.joinWithCode);
+  const router = useRouter();
 
   const [name, setName] = useState(baby?.name ?? '');
   const [birthDate, setBirthDate] = useState(
@@ -373,6 +376,7 @@ export default function ProfileScreen() {
 
   const weeks = ageInWeeks(formatDateKey(birthDate), new Date());
   const wakeRange = getAgeWakeWindowRange(weeks);
+  const ageLabel = formatBabyAge(formatDateKey(birthDate), new Date(), resolveLocale(locale));
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -381,6 +385,13 @@ export default function ProfileScreen() {
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Used for age-based wake window defaults
         </Text>
+
+        <BigButton
+          title={t('profile.openTasks')}
+          variant="secondary"
+          onPress={() => router.push('/tasks')}
+          style={{ marginBottom: spacing.lg }}
+        />
 
         <Card style={styles.formCard}>
           <Text style={[styles.label, { color: colors.textSecondary }]}>Name</Text>
@@ -599,118 +610,120 @@ export default function ProfileScreen() {
           />
         </Card>
 
-        {baby && (
-          <>
-            <Card style={styles.infoCard}>
-              <InfoRow label="Age" value={`${weeks} weeks`} />
-              <InfoRow
-                label="Sleep schedule"
-                value={
-                  resolvedSchedule
-                    ? formatNapScheduleLabel(resolvedSchedule)
-                    : 'Automatic'
-                }
-              />
-              <InfoRow
-                label="Reference wake window"
-                value={`${wakeRange.min}–${wakeRange.max} min`}
-                subtitle="General reference, not medical advice"
-              />
-            </Card>
+        {baby ? (
+          <Card style={styles.infoCard}>
+            <InfoRow label="Age" value={ageLabel} />
+            <InfoRow
+              label="Sleep schedule"
+              value={
+                resolvedSchedule
+                  ? formatNapScheduleLabel(resolvedSchedule)
+                  : 'Automatic'
+              }
+            />
+            <InfoRow
+              label="Reference wake window"
+              value={`${wakeRange.min}–${wakeRange.max} min`}
+              subtitle="General reference, not medical advice"
+            />
+          </Card>
+        ) : null}
 
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              {t('profile.cloudSync')}
-            </Text>
-            <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-              {authConfigured ? t('profile.cloudSyncHint') : t('profile.cloudNotConfigured')}
-            </Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          {t('profile.cloudSync')}
+        </Text>
+        <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+          {authConfigured ? t('profile.cloudSyncHint') : t('profile.cloudNotConfigured')}
+        </Text>
 
-            {authConfigured ? (
-              <Card style={{ marginBottom: spacing.lg }}>
-                {authUser ? (
+        {authConfigured ? (
+          <Card style={{ marginBottom: spacing.lg }}>
+            {authUser ? (
+              <>
+                <Text style={[styles.exportSummary, { color: colors.text }]}>
+                  {t('profile.signedInAs', {
+                    email: authUser.email ?? authUser.id.slice(0, 8),
+                  })}
+                </Text>
+                <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+                  {lastSyncedAt
+                    ? t('profile.lastSynced', {
+                        time: formatTime(new Date(lastSyncedAt)),
+                      })
+                    : t('profile.neverSynced')}
+                </Text>
+                {inviteCode ? (
                   <>
-                    <Text style={[styles.exportSummary, { color: colors.text }]}>
-                      {t('profile.signedInAs', {
-                        email: authUser.email ?? authUser.id.slice(0, 8),
-                      })}
-                    </Text>
-                    <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-                      {lastSyncedAt
-                        ? t('profile.lastSynced', {
-                            time: formatTime(new Date(lastSyncedAt)),
-                          })
-                        : t('profile.neverSynced')}
-                    </Text>
-                    {inviteCode ? (
-                      <>
-                        <InfoRow label={t('profile.inviteCode')} value={inviteCode} />
-                        <Text
-                          style={[
-                            styles.importHint,
-                            { color: colors.textSecondary, marginBottom: spacing.sm },
-                          ]}>
-                          {t('profile.inviteCodeHint')}
-                        </Text>
-                      </>
-                    ) : null}
-                    <BigButton
-                      title={isSyncing ? t('profile.syncing') : t('profile.syncNow')}
-                      onPress={handleSyncNow}
-                      loading={isSyncing}
-                      disabled={isSyncing}
-                      style={{ marginBottom: spacing.sm }}
-                    />
+                    <InfoRow label={t('profile.inviteCode')} value={inviteCode} />
                     <Text
                       style={[
-                        styles.label,
-                        { color: colors.textSecondary, marginBottom: spacing.xs },
+                        styles.importHint,
+                        { color: colors.textSecondary, marginBottom: spacing.sm },
                       ]}>
-                      {t('profile.joinHousehold')}
+                      {t('profile.inviteCodeHint')}
                     </Text>
-                    <TextInput
-                      value={joinCode}
-                      onChangeText={setJoinCode}
-                      placeholder={t('profile.joinCodePlaceholder')}
-                      placeholderTextColor={colors.textSecondary}
-                      autoCapitalize="characters"
-                      style={[
-                        styles.input,
-                        {
-                          color: colors.text,
-                          borderColor: colors.border,
-                          backgroundColor: colors.card,
-                          marginBottom: spacing.sm,
-                        },
-                      ]}
-                    />
-                    <BigButton
-                      title={t('profile.join')}
-                      variant="secondary"
-                      onPress={handleJoinHousehold}
-                      disabled={isSyncing || joinCode.trim().length < 6}
-                      style={{ marginBottom: spacing.sm }}
-                    />
-                    <BigButton
-                      title={t('profile.signOut')}
-                      variant="secondary"
-                      onPress={handleSignOutCloud}
-                    />
                   </>
-                ) : Platform.OS === 'ios' && appleAvailable ? (
-                  <BigButton
-                    title={isSigningIn ? t('profile.signingIn') : t('profile.signInApple')}
-                    onPress={handleSignInApple}
-                    loading={isSigningIn}
-                    disabled={isSigningIn}
-                  />
-                ) : (
-                  <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-                    {t('profile.appleOnlyIos')}
-                  </Text>
-                )}
-              </Card>
-            ) : null}
+                ) : null}
+                <BigButton
+                  title={isSyncing ? t('profile.syncing') : t('profile.syncNow')}
+                  onPress={handleSyncNow}
+                  loading={isSyncing}
+                  disabled={isSyncing}
+                  style={{ marginBottom: spacing.sm }}
+                />
+                <Text
+                  style={[
+                    styles.label,
+                    { color: colors.textSecondary, marginBottom: spacing.xs },
+                  ]}>
+                  {t('profile.joinHousehold')}
+                </Text>
+                <TextInput
+                  value={joinCode}
+                  onChangeText={setJoinCode}
+                  placeholder={t('profile.joinCodePlaceholder')}
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="characters"
+                  style={[
+                    styles.input,
+                    {
+                      color: colors.text,
+                      borderColor: colors.border,
+                      backgroundColor: colors.card,
+                      marginBottom: spacing.sm,
+                    },
+                  ]}
+                />
+                <BigButton
+                  title={t('profile.join')}
+                  variant="secondary"
+                  onPress={handleJoinHousehold}
+                  disabled={isSyncing || joinCode.trim().length < 6}
+                  style={{ marginBottom: spacing.sm }}
+                />
+                <BigButton
+                  title={t('profile.signOut')}
+                  variant="secondary"
+                  onPress={handleSignOutCloud}
+                />
+              </>
+            ) : Platform.OS === 'ios' && appleAvailable ? (
+              <BigButton
+                title={isSigningIn ? t('profile.signingIn') : t('profile.signInApple')}
+                onPress={handleSignInApple}
+                loading={isSigningIn}
+                disabled={isSigningIn}
+              />
+            ) : (
+              <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+                {t('profile.appleOnlyIos')}
+              </Text>
+            )}
+          </Card>
+        ) : null}
 
+        {baby ? (
+          <>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.data')}</Text>
             <Text style={[styles.importHint, { color: colors.textSecondary }]}>
               {t('profile.dataHint')}
@@ -741,7 +754,7 @@ export default function ProfileScreen() {
               style={{ marginBottom: spacing.lg }}
             />
           </>
-        )}
+        ) : null}
 
         <BigButton
           title={baby ? t('profile.saveChanges') : t('profile.createProfile')}

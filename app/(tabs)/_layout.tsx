@@ -50,12 +50,13 @@ export default function TabLayout() {
         name="log"
         options={{
           title: t('tabs.log'),
+          tabBarLabel: t('tabs.log'),
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{
-                ios: 'list.bullet.rectangle.fill',
-                android: 'format_list_bulleted',
-                web: 'format_list_bulleted',
+                ios: 'calendar',
+                android: 'calendar_today',
+                web: 'calendar_today',
               }}
               tintColor={color}
               size={26}
@@ -70,23 +71,6 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'chart.bar.fill', android: 'bar_chart', web: 'bar_chart' }}
-              tintColor={color}
-              size={26}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="tasks"
-        options={{
-          title: t('tabs.tasks'),
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'checklist',
-                android: 'checklist',
-                web: 'checklist',
-              }}
               tintColor={color}
               size={26}
             />

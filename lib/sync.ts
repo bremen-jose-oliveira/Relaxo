@@ -5,6 +5,7 @@ import {
   getAllBabies,
   getBathEventsForBaby,
   getDailyChoresForBaby,
+  getDayContextTagsForBaby,
   getDiaperEventsForBaby,
   getFeedingEventsForBaby,
   getSleepEventsForBaby,
@@ -18,8 +19,11 @@ import type {
   Baby,
   BathEvent,
   DailyChore,
+  DayContextTag,
+  DayContextTagEvent,
   DiaperEvent,
   FeedingEvent,
+  NapExtension,
   SleepEvent,
   SleepPause,
   WakeEvent,
@@ -33,6 +37,7 @@ const {
   bathEvents,
   wakeEvents,
   dailyChores,
+  dayContextTags,
 } = schema;
 
 function makeInviteCode(): string {
@@ -235,7 +240,7 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pushed += babyPush.count;
 
     for (const baby of babies) {
-      const [sleep, pauses, feedings, diapers, baths, wakes, chores] = await Promise.all([
+      const [sleep, pauses, feedings, diapers, baths, wakes, chores, tags] = await Promise.all([
         getSleepEventsForBaby(baby.id),
         getSleepPausesForBaby(baby.id),
         getFeedingEventsForBaby(baby.id),
@@ -243,6 +248,7 @@ export async function syncHouseholdData(): Promise<SyncResult> {
         getBathEventsForBaby(baby.id),
         getWakeEventsForBaby(baby.id),
         getDailyChoresForBaby(baby.id),
+        getDayContextTagsForBaby(baby.id),
       ]);
 
       const batches: { table: string; rows: Record<string, unknown>[] }[] = [
@@ -255,6 +261,7 @@ export async function syncHouseholdData(): Promise<SyncResult> {
             type: e.type,
             start_time: e.startTime,
             end_time: e.endTime,
+            extension: e.extension ?? null,
             updated_at: now,
             deleted_at: null,
           })),
@@ -341,6 +348,18 @@ export async function syncHouseholdData(): Promise<SyncResult> {
             deleted_at: null,
           })),
         },
+        {
+          table: 'day_context_tags',
+          rows: tags.map((t) => ({
+            id: t.id,
+            household_id: householdId,
+            baby_id: t.babyId,
+            date_key: t.dateKey,
+            tag: t.tag,
+            updated_at: now,
+            deleted_at: null,
+          })),
+        },
       ];
 
       for (const batch of batches) {
@@ -379,8 +398,16 @@ export async function syncHouseholdData(): Promise<SyncResult> {
         type: row.type as SleepEvent['type'],
         startTime: String(row.start_time),
         endTime: row.end_time ? String(row.end_time) : null,
+        extension: (row.extension as NapExtension | null) ?? null,
       };
-      await upsertById(sleepEvents, event.id, event);
+      await upsertById(sleepEvents, event.id, {
+        id: event.id,
+        babyId: event.babyId,
+        type: event.type,
+        startTime: event.startTime,
+        endTime: event.endTime,
+        extension: event.extension ?? null,
+      });
       pulled += 1;
     }
 
@@ -469,6 +496,24 @@ export async function syncHouseholdData(): Promise<SyncResult> {
         recurrence: (row.recurrence as DailyChore['recurrence']) ?? 'daily',
       };
       await upsertById(dailyChores, chore.id, chore);
+      pulled += 1;
+    }
+
+    const tagRemote = await pullTable('day_context_tags', householdId);
+    if (tagRemote.error) return { ok: false, error: tagRemote.error };
+    for (const row of tagRemote.rows) {
+      const tag: DayContextTagEvent = {
+        id: String(row.id),
+        babyId: String(row.baby_id),
+        dateKey: String(row.date_key),
+        tag: row.tag as DayContextTag,
+      };
+      await upsertById(dayContextTags, tag.id, {
+        id: tag.id,
+        babyId: tag.babyId,
+        dateKey: tag.dateKey,
+        tag: tag.tag,
+      });
       pulled += 1;
     }
 

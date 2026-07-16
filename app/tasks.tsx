@@ -18,6 +18,7 @@ import { BigButton } from '@/components/BigButton';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { useTranslation } from '@/lib/i18n';
 import { formatDate } from '@/lib/dateUtils';
+import { Stack } from 'expo-router';
 import type { ChoreRecurrence, DailyChore } from '@/types';
 
 export default function TasksScreen() {
@@ -127,18 +128,23 @@ export default function TasksScreen() {
 
   if (!baby) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={styles.empty}>
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            {t('tasks.setupProfile')}
-          </Text>
-        </View>
-      </SafeAreaView>
+      <>
+        <Stack.Screen options={{ title: t('tabs.tasks') }} />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+          <View style={styles.empty}>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              {t('tasks.setupProfile')}
+            </Text>
+          </View>
+        </SafeAreaView>
+      </>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+    <>
+      <Stack.Screen options={{ title: t('tabs.tasks') }} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -225,6 +231,7 @@ export default function TasksScreen() {
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </>
   );
 }
 

@@ -31,7 +31,10 @@ export async function signInWithApple(): Promise<{ user: User } | AuthErrorResul
 
   const available = await AppleAuthentication.isAvailableAsync();
   if (!available) {
-    return { error: 'Sign in with Apple is not available on this device.' };
+    return {
+      error:
+        'Sign in with Apple is not available here. Use a real iPhone with a new preview build that includes Apple Sign-In (not Expo Go / old install).',
+    };
   }
 
   try {

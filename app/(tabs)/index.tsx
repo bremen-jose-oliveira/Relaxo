@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import { BigButton } from '@/components/BigButton';
 import { Card } from '@/components/Card';
 import { ConfidenceBadge } from '@/components/ConfidenceBadge';
 import { AgeInsightCard } from '@/components/AgeInsightCard';
+import { WakeReadinessPill } from '@/components/WakeReadinessPill';
+import { NapExtensionSheet } from '@/components/NapExtensionSheet';
 import { FeedingLogModal } from '@/components/FeedingLogModal';
 import { DiaperLogModal } from '@/components/DiaperLogModal';
 import { BathLogModal } from '@/components/BathLogModal';
@@ -31,15 +33,26 @@ import { SleepTimer } from '@/components/SleepTimer';
 import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
 import { getTypicalSleepSchedule } from '@/lib/sleepPatterns';
 import { UsualSleepTimes } from '@/components/UsualSleepTimes';
-import { formatTime } from '@/lib/dateUtils';
-import { useTranslation } from '@/lib/i18n';
+import { ageInWeeks, formatTime, minutesBetween } from '@/lib/dateUtils';
+import { resolveLocale, useTranslation } from '@/lib/i18n';
+import {
+  formatBabyAge,
+  getWakeReadiness,
+} from '@/lib/sleepInsights';
+import {
+  getAgeDefaultMidpoint,
+  getLastWakeUpTime,
+  getPersonalAverageForSlot,
+} from '@/lib/predictNextSleep';
 import { useRouter } from 'expo-router';
+import type { NapExtension } from '@/types';
 
 export default function HomeScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const locale = useAppStore((s) => s.locale);
   const t = useTranslation(locale);
+  const resolvedLang = resolveLocale(locale);
 
   const initialize = useAppStore((s) => s.initialize);
   const isInitialized = useAppStore((s) => s.isInitialized);
@@ -47,6 +60,7 @@ export default function HomeScreen() {
   const prediction = useAppStore((s) => s.prediction);
   const startSleep = useAppStore((s) => s.startSleep);
   const endSleep = useAppStore((s) => s.endSleep);
+  const setSleepExtension = useAppStore((s) => s.setSleepExtension);
   const pauseSleep = useAppStore((s) => s.pauseSleep);
   const resumeSleep = useAppStore((s) => s.resumeSleep);
   const endBreastFeed = useAppStore((s) => s.endBreastFeed);
@@ -63,6 +77,7 @@ export default function HomeScreen() {
   const [feedingOpen, setFeedingOpen] = useState(false);
   const [diaperOpen, setDiaperOpen] = useState(false);
   const [bathOpen, setBathOpen] = useState(false);
+  const [extensionEventId, setExtensionEventId] = useState<string | null>(null);
   const addDiaper = useAppStore((s) => s.addDiaper);
   const addBath = useAppStore((s) => s.addBath);
   const { height: windowHeight } = useWindowDimensions();
@@ -70,6 +85,37 @@ export default function HomeScreen() {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  const now = useMemo(() => new Date(), [events, wakes, ongoing]);
+
+  const wakeReadiness = useMemo(() => {
+    if (!baby || ongoing) return null;
+    const lastWake = getLastWakeUpTime(events, wakes, now);
+    if (!lastWake) return null;
+    const awakeMinutes = minutesBetween(lastWake, now);
+    const slot = prediction?.slot ?? 0;
+    const napGoal = prediction?.resolvedNapGoal ?? resolveNapGoal(baby, events, wakes, now).goal;
+    const { average } = getPersonalAverageForSlot(events, wakes, slot, now, napGoal);
+    const weeks = ageInWeeks(baby.birthDate, now);
+    const target = average ?? getAgeDefaultMidpoint(weeks);
+    return getWakeReadiness(awakeMinutes, target);
+  }, [baby, ongoing, events, wakes, now, prediction]);
+
+  const ageLabel = baby ? formatBabyAge(baby.birthDate, now, resolvedLang) : '';
+
+  const handleEndSleep = async () => {
+    const ended = await endSleep();
+    if (ended?.type === 'nap') {
+      setExtensionEventId(ended.id);
+    }
+  };
+
+  const handleExtensionSelect = async (extension: NapExtension) => {
+    if (extensionEventId) {
+      await setSleepExtension(extensionEventId, extension);
+    }
+    setExtensionEventId(null);
+  };
 
   if (!isInitialized || isLoading) {
     return (
@@ -141,11 +187,18 @@ export default function HomeScreen() {
         <View style={styles.centerBlock}>
           <View style={styles.hero}>
             <Text style={[styles.babyName, { color: colors.text }]}>{baby.name}</Text>
+            <Text style={[styles.ageLine, { color: colors.textSecondary }]}>
+              {t('home.ageLabel', { age: ageLabel })}
+            </Text>
 
             <View style={[styles.statusPill, { backgroundColor: statusColor + '44' }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <Text style={[styles.statusText, { color: colors.text }]}>{statusText}</Text>
             </View>
+
+            {wakeReadiness && !ongoing ? (
+              <WakeReadinessPill readiness={wakeReadiness} t={t} />
+            ) : null}
 
             {prediction && !ongoing && !ongoingFeed && (
               <Card style={styles.heroCard}>
@@ -215,7 +268,7 @@ export default function HomeScreen() {
                     style={{ marginBottom: spacing.md }}
                   />
                 )}
-                <BigButton title={t('home.endSleep')} variant="primary" onPress={() => endSleep()} />
+                <BigButton title={t('home.endSleep')} variant="primary" onPress={() => void handleEndSleep()} />
               </>
             ) : ongoingFeed && trackFeedDuration ? (
               <BigButton title={t('home.endFeeding')} variant="primary" onPress={() => endBreastFeed()} />
@@ -331,6 +384,12 @@ export default function HomeScreen() {
         }}
         onClose={() => setBathOpen(false)}
       />
+      <NapExtensionSheet
+        visible={extensionEventId != null}
+        onSelect={(ext) => void handleExtensionSelect(ext)}
+        onSkip={() => setExtensionEventId(null)}
+        t={t}
+      />
     </SafeAreaView>
   );
 }
@@ -370,6 +429,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.3,
     textTransform: 'uppercase',
+    marginBottom: spacing.xs,
+    textAlign: 'center',
+  },
+  ageLine: {
+    fontSize: 14,
     marginBottom: spacing.md,
     textAlign: 'center',
   },

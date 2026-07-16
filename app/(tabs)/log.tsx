@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,31 +7,53 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams } from 'expo-router';
 import { Colors, spacing } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
 import { WakeDayPicker } from '@/components/WakeDayPicker';
 import { TimelineEntry } from '@/components/TimelineEntry';
+import { DayContextChips } from '@/components/DayContextChips';
+import { NapEvalDot } from '@/components/NapEvalDot';
 import { FeedingLogModal } from '@/components/FeedingLogModal';
 import { DiaperLogModal } from '@/components/DiaperLogModal';
 import { BathLogModal } from '@/components/BathLogModal';
 import { SleepLogModal } from '@/components/SleepLogModal';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { useTranslation } from '@/lib/i18n';
+import { formatDateKey, parseDateKey } from '@/lib/dateUtils';
+import { formatSleepDuration, getWakeDaySummary } from '@/lib/daySummary';
+import {
+  evaluateNapLength,
+  getDaySleepInsights,
+  getPersonalNapAverageMinutes,
+  napDurationForEvent,
+} from '@/lib/sleepInsights';
 import { buildTimeline, filterTimelineForDayView } from '@/lib/timeline';
-import type { BathEvent, DiaperEvent, FeedingEvent, SleepEvent, TimelineItem } from '@/types';
+import type {
+  BathEvent,
+  DayContextTag,
+  DiaperEvent,
+  FeedingEvent,
+  SleepEvent,
+  TimelineItem,
+} from '@/types';
 
 export default function LogScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const locale = useAppStore((s) => s.locale);
   const t = useTranslation(locale);
+  const params = useLocalSearchParams<{ day?: string }>();
 
   const events = useAppStore((s) => s.events);
   const feedings = useAppStore((s) => s.feedings);
   const diapers = useAppStore((s) => s.diapers);
   const baths = useAppStore((s) => s.baths);
   const wakes = useAppStore((s) => s.wakes);
+  const sleepPauses = useAppStore((s) => s.sleepPauses);
+  const dayContextTags = useAppStore((s) => s.dayContextTags);
+  const toggleDayTag = useAppStore((s) => s.toggleDayTag);
   const removeSleepEvent = useAppStore((s) => s.removeSleepEvent);
   const addSleepEvent = useAppStore((s) => s.addSleepEvent);
   const editSleepEvent = useAppStore((s) => s.editSleepEvent);
@@ -56,6 +78,46 @@ export default function LogScreen() {
   const [editingBath, setEditingBath] = useState<BathEvent | null>(null);
 
   const now = useMemo(() => new Date(), []);
+
+  useEffect(() => {
+    if (typeof params.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(params.day)) {
+      setSelectedDay(parseDateKey(params.day));
+    }
+  }, [params.day]);
+
+  const selectedDateKey = formatDateKey(selectedDay);
+  const selectedDayTags = useMemo(() => {
+    const set = new Set<DayContextTag>();
+    for (const row of dayContextTags) {
+      if (row.dateKey === selectedDateKey) set.add(row.tag);
+    }
+    return set;
+  }, [dayContextTags, selectedDateKey]);
+
+  const daySummary = useMemo(
+    () =>
+      getWakeDaySummary(
+        events,
+        sleepPauses,
+        feedings,
+        diapers,
+        baths,
+        wakes,
+        selectedDay,
+        now
+      ),
+    [events, sleepPauses, feedings, diapers, baths, wakes, selectedDay, now]
+  );
+
+  const daySleepInsights = useMemo(
+    () => getDaySleepInsights(events, sleepPauses, wakes, selectedDay, now),
+    [events, sleepPauses, wakes, selectedDay, now]
+  );
+
+  const personalNapAvg = useMemo(
+    () => getPersonalNapAverageMinutes(events, sleepPauses, now, 14),
+    [events, sleepPauses, now]
+  );
 
   const timeline = useMemo(
     () =>
@@ -140,6 +202,27 @@ export default function LogScreen() {
             <Text style={[styles.wakeDayHint, { color: colors.textSecondary }]}>
               {t('log.dayHint')}
             </Text>
+
+            <Text style={[styles.summaryLine, { color: colors.text }]}>
+              {t('log.daySummaryLine', {
+                sleep: formatSleepDuration(daySleepInsights.daytimeSleepMinutes),
+                naps: daySleepInsights.napCount,
+                feeds: daySummary.feedCount,
+                diapers: daySummary.diaperCount,
+              })}
+            </Text>
+
+            <Text style={[styles.sectionLabel, { color: colors.text }]}>
+              {t('history.dayTags')}
+            </Text>
+            <DayContextChips
+              selected={selectedDayTags}
+              onToggle={(tag) => {
+                void toggleDayTag(selectedDateKey, tag);
+              }}
+              t={t}
+            />
+
             <View style={styles.headerActions}>
               <BigButton
                 title={t('log.addSleep')}
@@ -180,13 +263,23 @@ export default function LogScreen() {
             </View>
           </View>
         }
-        renderItem={({ item }) => (
-          <TimelineEntry
-            item={item}
-            onPress={() => openEdit(item)}
-            onLongPress={() => handleDelete(item)}
-          />
-        )}
+        renderItem={({ item }) => {
+          let napEval = null as ReturnType<typeof evaluateNapLength>;
+          if (item.kind === 'sleep' && item.data.type === 'nap' && item.data.endTime) {
+            const mins = napDurationForEvent(item.data, sleepPauses);
+            if (mins != null) napEval = evaluateNapLength(mins, personalNapAvg);
+          }
+          return (
+            <View>
+              <TimelineEntry
+                item={item}
+                onPress={() => openEdit(item)}
+                onLongPress={() => handleDelete(item)}
+              />
+              {napEval ? <NapEvalDot eval={napEval} t={t} /> : null}
+            </View>
+          );
+        }}
         ListEmptyComponent={
           <Text style={[styles.empty, { color: colors.textSecondary }]}>
             {t('log.noEvents')}
@@ -260,7 +353,18 @@ export default function LogScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  wakeDayHint: { fontSize: 13, lineHeight: 18, marginBottom: spacing.lg },
+  wakeDayHint: { fontSize: 13, lineHeight: 18, marginBottom: spacing.md },
+  summaryLine: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  sectionLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: spacing.xs,
+  },
   headerActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',

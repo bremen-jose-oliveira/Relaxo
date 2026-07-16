@@ -71,6 +71,20 @@
       "when": 1782393000000,
       "tag": "0009_chore_recurrence",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1782394000000,
+      "tag": "0010_sync_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1782395000000,
+      "tag": "0011_sleep_insights",
+      "breakpoints": true
     }
   ]
 }

@@ -8,8 +8,11 @@ import type {
   ChoreRecurrence,
   DailyChore,
   DailyChoreCompletion,
+  DayContextTag,
+  DayContextTagEvent,
   DiaperEvent,
   FeedingEvent,
+  NapExtension,
   SleepEvent,
   SleepPause,
   WakeEvent,
@@ -27,6 +30,7 @@ const {
   appSettings,
   dailyChores,
   dailyChoreCompletions,
+  dayContextTags,
 } = schema;
 
 // Local-only persistence. No multi-device sync in v1.
@@ -65,6 +69,18 @@ function toSleepEvent(row: typeof sleepEvents.$inferSelect): SleepEvent {
     type: row.type,
     startTime: row.startTime,
     endTime: row.endTime ?? null,
+    extension: (row.extension as NapExtension | null) ?? null,
+  };
+}
+
+function toDayContextTag(
+  row: typeof dayContextTags.$inferSelect,
+): DayContextTagEvent {
+  return {
+    id: row.id,
+    babyId: row.babyId,
+    dateKey: row.dateKey,
+    tag: row.tag as DayContextTag,
   };
 }
 
@@ -204,6 +220,7 @@ export async function deleteBaby(id: string): Promise<void> {
   await db.delete(diaperEvents).where(eq(diaperEvents.babyId, id));
   await db.delete(bathEvents).where(eq(bathEvents.babyId, id));
   await db.delete(wakeEvents).where(eq(wakeEvents.babyId, id));
+  await db.delete(dayContextTags).where(eq(dayContextTags.babyId, id));
   await db.delete(babies).where(eq(babies.id, id));
 }
 
@@ -233,7 +250,14 @@ export async function getSleepEvent(id: string): Promise<SleepEvent | null> {
 
 export async function insertSleepEvent(event: SleepEvent): Promise<void> {
   const db = await getDb();
-  await db.insert(sleepEvents).values(event);
+  await db.insert(sleepEvents).values({
+    id: event.id,
+    babyId: event.babyId,
+    type: event.type,
+    startTime: event.startTime,
+    endTime: event.endTime,
+    extension: event.extension ?? null,
+  });
 }
 
 export async function updateSleepEvent(event: SleepEvent): Promise<void> {
@@ -244,6 +268,7 @@ export async function updateSleepEvent(event: SleepEvent): Promise<void> {
       type: event.type,
       startTime: event.startTime,
       endTime: event.endTime,
+      extension: event.extension ?? null,
     })
     .where(eq(sleepEvents.id, event.id));
 }
@@ -292,8 +317,15 @@ export async function bulkInsertSleepEvents(
     }
 
     const id = newId();
-    const row: SleepEvent = { id, ...event };
-    await db.insert(sleepEvents).values(row);
+    const row: SleepEvent = { id, ...event, extension: event.extension ?? null };
+    await db.insert(sleepEvents).values({
+      id: row.id,
+      babyId: row.babyId,
+      type: row.type,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      extension: row.extension ?? null,
+    });
     existing.push(row);
     inserted.push(row);
     added++;
@@ -787,4 +819,69 @@ export async function setDailyChoreCompleted(
     dateKey,
     completedAt: new Date().toISOString(),
   });
+}
+
+// ─── Day context tags ────────────────────────────────────────────────────────
+
+export async function getDayContextTagsForBaby(
+  babyId: string,
+): Promise<DayContextTagEvent[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(dayContextTags)
+    .where(eq(dayContextTags.babyId, babyId))
+    .orderBy(asc(dayContextTags.dateKey));
+  return rows.map(toDayContextTag);
+}
+
+export async function getDayContextTagsForDate(
+  babyId: string,
+  dateKey: string,
+): Promise<DayContextTagEvent[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(dayContextTags)
+    .where(
+      and(eq(dayContextTags.babyId, babyId), eq(dayContextTags.dateKey, dateKey)),
+    );
+  return rows.map(toDayContextTag);
+}
+
+export async function insertDayContextTag(
+  event: DayContextTagEvent,
+): Promise<void> {
+  const db = await getDb();
+  await db.insert(dayContextTags).values({
+    id: event.id,
+    babyId: event.babyId,
+    dateKey: event.dateKey,
+    tag: event.tag,
+  });
+}
+
+export async function deleteDayContextTag(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(dayContextTags).where(eq(dayContextTags.id, id));
+}
+
+export async function toggleDayContextTag(
+  babyId: string,
+  dateKey: string,
+  tag: DayContextTag,
+): Promise<DayContextTagEvent[]> {
+  const existing = await getDayContextTagsForDate(babyId, dateKey);
+  const match = existing.find((e) => e.tag === tag);
+  if (match) {
+    await deleteDayContextTag(match.id);
+  } else {
+    await insertDayContextTag({
+      id: newId(),
+      babyId,
+      dateKey,
+      tag,
+    });
+  }
+  return getDayContextTagsForDate(babyId, dateKey);
 }

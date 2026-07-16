@@ -76,6 +76,14 @@ function RootLayoutNav() {
     <ThemeProvider value={colorScheme === 'dark' ? RelaxoDarkTheme : RelaxoLightTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="tasks"
+          options={{
+            title: 'Tasks',
+            presentation: 'card',
+            headerBackTitle: 'Back',
+          }}
+        />
       </Stack>
     </ThemeProvider>
   );

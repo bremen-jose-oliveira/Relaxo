@@ -15,12 +15,43 @@ export type Baby = {
   highNeed: boolean;
 };
 
+export type NapExtension =
+  | 'independent'
+  | 'feeding'
+  | 'rocking'
+  | 'contact'
+  | 'not_extended';
+
+export type DayContextTag =
+  | 'outing'
+  | 'visitors'
+  | 'cafe'
+  | 'transit'
+  | 'car'
+  | 'vaccination'
+  | 'sick'
+  | 'teething'
+  | 'baby_class'
+  | 'shopping'
+  | 'park'
+  | 'quiet_home'
+  | 'travel';
+
 export type SleepEvent = {
   id: string;
   babyId: string;
   type: 'nap' | 'night';
   startTime: string; // ISO datetime
   endTime: string | null; // null while currently asleep
+  /** How the nap was extended into another sleep cycle; null/undefined if not set. */
+  extension?: NapExtension | null;
+};
+
+export type DayContextTagEvent = {
+  id: string;
+  babyId: string;
+  dateKey: string; // YYYY-MM-DD
+  tag: DayContextTag;
 };
 
 export type SleepPause = {
