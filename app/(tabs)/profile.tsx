@@ -8,6 +8,7 @@ import {
   ScrollView,
   Pressable,
   Switch,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -19,7 +20,7 @@ import { Card, InfoRow } from '@/components/Card';
 import { DatePickerField } from '@/components/DatePickerField';
 import { ImportPreviewModal } from '@/components/ImportPreviewModal';
 import type { AppLocale, NapGoal } from '@/types';
-import { ageInWeeks, formatDateKey } from '@/lib/dateUtils';
+import { ageInWeeks, formatDateKey, formatTime } from '@/lib/dateUtils';
 import { getAgeWakeWindowRange } from '@/lib/predictNextSleep';
 import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
 import {
@@ -45,6 +46,7 @@ import {
   reloadWithLatestUpdate,
 } from '@/lib/appUpdates';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
+import { useAuthStore } from '@/store/useAuthStore';
 
 const ROUTINE_NAP_OPTIONS: NapGoal[] = [2, 3, 4];
 
@@ -57,6 +59,7 @@ export default function ProfileScreen() {
   const locale = useAppStore((s) => s.locale);
   const t = useTranslation(locale);
   const importCareEvents = useAppStore((s) => s.importCareEvents);
+  const initialize = useAppStore((s) => s.initialize);
   const events = useAppStore((s) => s.events);
   const sleepPauses = useAppStore((s) => s.sleepPauses);
   const feedings = useAppStore((s) => s.feedings);
@@ -64,6 +67,18 @@ export default function ProfileScreen() {
   const baths = useAppStore((s) => s.baths);
   const wakes = useAppStore((s) => s.wakes);
   const baby = useActiveBaby();
+
+  const authConfigured = useAuthStore((s) => s.configured);
+  const appleAvailable = useAuthStore((s) => s.appleAvailable);
+  const authUser = useAuthStore((s) => s.user);
+  const inviteCode = useAuthStore((s) => s.inviteCode);
+  const lastSyncedAt = useAuthStore((s) => s.lastSyncedAt);
+  const isSigningIn = useAuthStore((s) => s.isSigningIn);
+  const isSyncing = useAuthStore((s) => s.isSyncing);
+  const signInApple = useAuthStore((s) => s.signInApple);
+  const signOutCloud = useAuthStore((s) => s.signOut);
+  const syncNow = useAuthStore((s) => s.syncNow);
+  const joinWithCode = useAuthStore((s) => s.joinWithCode);
 
   const [name, setName] = useState(baby?.name ?? '');
   const [birthDate, setBirthDate] = useState(
@@ -91,6 +106,7 @@ export default function ProfileScreen() {
   const [exporting, setExporting] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [openingBuilds, setOpeningBuilds] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
 
   const versionInfo = useMemo(() => getAppVersionInfo(), []);
 
@@ -268,6 +284,45 @@ export default function ProfileScreen() {
   const handleCloseImport = () => {
     setImportModalVisible(false);
     resetImportState();
+  };
+
+  const handleSignInApple = async () => {
+    const result = await signInApple();
+    if (!result.ok) {
+      if (result.error === 'canceled') return;
+      Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
+      return;
+    }
+    await initialize();
+    Alert.alert(t('profile.syncDone'));
+  };
+
+  const handleSyncNow = async () => {
+    const result = await syncNow();
+    if (!result.ok) {
+      Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
+      return;
+    }
+    await initialize();
+    Alert.alert(
+      t('profile.syncDone'),
+      `↑ ${result.pushed ?? 0} · ↓ ${result.pulled ?? 0}`
+    );
+  };
+
+  const handleJoinHousehold = async () => {
+    const result = await joinWithCode(joinCode);
+    if (!result.ok) {
+      Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
+      return;
+    }
+    setJoinCode('');
+    await initialize();
+    Alert.alert(t('profile.syncDone'));
+  };
+
+  const handleSignOutCloud = async () => {
+    await signOutCloud();
   };
 
   const handleCheckUpdates = async () => {
@@ -562,6 +617,99 @@ export default function ProfileScreen() {
                 subtitle="General reference, not medical advice"
               />
             </Card>
+
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('profile.cloudSync')}
+            </Text>
+            <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+              {authConfigured ? t('profile.cloudSyncHint') : t('profile.cloudNotConfigured')}
+            </Text>
+
+            {authConfigured ? (
+              <Card style={{ marginBottom: spacing.lg }}>
+                {authUser ? (
+                  <>
+                    <Text style={[styles.exportSummary, { color: colors.text }]}>
+                      {t('profile.signedInAs', {
+                        email: authUser.email ?? authUser.id.slice(0, 8),
+                      })}
+                    </Text>
+                    <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+                      {lastSyncedAt
+                        ? t('profile.lastSynced', {
+                            time: formatTime(new Date(lastSyncedAt)),
+                          })
+                        : t('profile.neverSynced')}
+                    </Text>
+                    {inviteCode ? (
+                      <>
+                        <InfoRow label={t('profile.inviteCode')} value={inviteCode} />
+                        <Text
+                          style={[
+                            styles.importHint,
+                            { color: colors.textSecondary, marginBottom: spacing.sm },
+                          ]}>
+                          {t('profile.inviteCodeHint')}
+                        </Text>
+                      </>
+                    ) : null}
+                    <BigButton
+                      title={isSyncing ? t('profile.syncing') : t('profile.syncNow')}
+                      onPress={handleSyncNow}
+                      loading={isSyncing}
+                      disabled={isSyncing}
+                      style={{ marginBottom: spacing.sm }}
+                    />
+                    <Text
+                      style={[
+                        styles.label,
+                        { color: colors.textSecondary, marginBottom: spacing.xs },
+                      ]}>
+                      {t('profile.joinHousehold')}
+                    </Text>
+                    <TextInput
+                      value={joinCode}
+                      onChangeText={setJoinCode}
+                      placeholder={t('profile.joinCodePlaceholder')}
+                      placeholderTextColor={colors.textSecondary}
+                      autoCapitalize="characters"
+                      style={[
+                        styles.input,
+                        {
+                          color: colors.text,
+                          borderColor: colors.border,
+                          backgroundColor: colors.card,
+                          marginBottom: spacing.sm,
+                        },
+                      ]}
+                    />
+                    <BigButton
+                      title={t('profile.join')}
+                      variant="secondary"
+                      onPress={handleJoinHousehold}
+                      disabled={isSyncing || joinCode.trim().length < 6}
+                      style={{ marginBottom: spacing.sm }}
+                    />
+                    <BigButton
+                      title={t('profile.signOut')}
+                      variant="secondary"
+                      onPress={handleSignOutCloud}
+                    />
+                  </>
+                ) : Platform.OS === 'ios' && appleAvailable ? (
+                  <BigButton
+                    title={isSigningIn ? t('profile.signingIn') : t('profile.signInApple')}
+                    onPress={handleSignInApple}
+                    loading={isSigningIn}
+                    disabled={isSigningIn}
+                  />
+                ) : (
+                  <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+                    {t('profile.appleOnlyIos')}
+                  </Text>
+                )}
+              </Card>
+            ) : null}
 
             <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.data')}</Text>
             <Text style={[styles.importHint, { color: colors.textSecondary }]}>

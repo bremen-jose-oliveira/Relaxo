@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { Colors } from '@/constants/Colors';
+import { useAuthStore } from '@/store/useAuthStore';
 
 export {
   ErrorBoundary,
@@ -21,10 +22,15 @@ export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
+  const initializeAuth = useAuthStore((s) => s.initializeAuth);
 
   useEffect(() => {
     if (error) throw error;
   }, [error]);
+
+  useEffect(() => {
+    initializeAuth();
+  }, [initializeAuth]);
 
   useEffect(() => {
     if (loaded) {
