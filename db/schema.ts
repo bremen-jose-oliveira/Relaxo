@@ -139,6 +139,8 @@ export const dailyChores = sqliteTable(
     recurrence: text('recurrence', { enum: ['daily', 'once'] })
       .notNull()
       .default('daily'),
+    /** Minutes from local midnight; null = no reminder. */
+    reminderMinutes: integer('reminder_minutes'),
   },
   (table) => [index('idx_daily_chores_baby').on(table.babyId)]
 );

@@ -108,6 +108,8 @@ export type DailyChore = {
   sortOrder: number;
   createdAt: string;
   recurrence: ChoreRecurrence;
+  /** Minutes from local midnight for the daily nudge; null = no reminder. */
+  reminderMinutes: number | null;
 };
 
 export type DailyChoreCompletion = {

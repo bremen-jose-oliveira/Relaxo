@@ -88,6 +88,11 @@ export async function setupNotificationChannel(): Promise<void> {
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
     });
+    await Notifications.setNotificationChannelAsync('task-reminders', {
+      name: 'Task Reminders',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      vibrationPattern: [0, 250, 250, 250],
+    });
   } catch (error) {
     console.warn('[Relaxo] Could not create notification channel:', error);
   }

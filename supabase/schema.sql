@@ -149,6 +149,7 @@ create table if not exists public.daily_chores (
   sort_order integer not null default 0,
   created_at text not null,
   recurrence text not null default 'daily' check (recurrence in ('daily', 'once')),
+  reminder_minutes integer,
   updated_at timestamptz not null default now(),
   deleted_at timestamptz
 );

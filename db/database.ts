@@ -317,7 +317,11 @@ export async function bulkInsertSleepEvents(
     }
 
     const id = newId();
-    const row: SleepEvent = { id, ...event, extension: event.extension ?? null };
+    const row: SleepEvent = {
+      id,
+      ...event,
+      extension: event.extension ?? null,
+    };
     await db.insert(sleepEvents).values({
       id: row.id,
       babyId: row.babyId,
@@ -689,6 +693,8 @@ function toDailyChore(row: typeof dailyChores.$inferSelect): DailyChore {
     sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     recurrence,
+    reminderMinutes:
+      typeof row.reminderMinutes === "number" ? row.reminderMinutes : null,
   };
 }
 
@@ -757,6 +763,8 @@ export async function insertDailyChore(
     sortOrder: chore.sortOrder,
     createdAt: chore.createdAt,
     recurrence: chore.recurrence ?? "daily",
+    reminderMinutes:
+      chore.reminderMinutes === undefined ? null : chore.reminderMinutes,
   };
   await db.insert(dailyChores).values(row);
   return row;
@@ -844,7 +852,10 @@ export async function getDayContextTagsForDate(
     .select()
     .from(dayContextTags)
     .where(
-      and(eq(dayContextTags.babyId, babyId), eq(dayContextTags.dateKey, dateKey)),
+      and(
+        eq(dayContextTags.babyId, babyId),
+        eq(dayContextTags.dateKey, dateKey),
+      ),
     );
   return rows.map(toDayContextTag);
 }

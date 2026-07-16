@@ -58,6 +58,13 @@ import {
   scheduleSleepReminder,
   setupNotificationChannel,
 } from '@/lib/notifications';
+import {
+  DEFAULT_TASK_REMINDER_MINUTES,
+  cancelAllTaskNotifications,
+  snoozeTaskReminder,
+  snoozeTaskUntilTonight,
+  syncTaskReminders,
+} from '@/lib/taskReminders';
 
 type AppState = {
   babies: Baby[];
@@ -105,9 +112,15 @@ type AppState = {
   editWake: (event: WakeEvent) => Promise<void>;
   removeWake: (id: string) => Promise<void>;
   refreshChores: () => Promise<void>;
-  addDailyChore: (title: string, recurrence?: ChoreRecurrence) => Promise<void>;
+  addDailyChore: (
+    title: string,
+    recurrence?: ChoreRecurrence,
+    reminderMinutes?: number | null
+  ) => Promise<void>;
   toggleDailyChore: (choreId: string, completed: boolean) => Promise<void>;
   removeDailyChore: (id: string) => Promise<void>;
+  snoozeDailyChore: (choreId: string, minutes: number) => Promise<void>;
+  snoozeDailyChoreTonight: (choreId: string) => Promise<void>;
   recomputePrediction: () => Promise<void>;
   importCareEvents: (preview: ImportPreview) => Promise<{
     sleepAdded: number;
@@ -377,7 +390,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   refreshChores: async () => {
-    const { activeBabyId } = get();
+    const { activeBabyId, babies } = get();
     if (!activeBabyId) {
       set({ dailyChores: [], completedChoreIdsToday: [] });
       return;
@@ -387,21 +400,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       getDailyChoresForBaby(activeBabyId),
       getDailyChoreCompletionsForDate(activeBabyId, dateKey),
     ]);
+    const completedChoreIdsToday = completions.map((c) => c.choreId);
     set({
       dailyChores,
-      completedChoreIdsToday: completions.map((c) => c.choreId),
+      completedChoreIdsToday,
     });
+    const baby = babies.find((b) => b.id === activeBabyId);
+    await syncTaskReminders(
+      dailyChores,
+      completedChoreIdsToday,
+      baby?.name ?? ''
+    );
   },
 
-  addDailyChore: async (title, recurrence = 'daily') => {
+  addDailyChore: async (title, recurrence = 'daily', reminderMinutes) => {
     const { activeBabyId, dailyChores } = get();
     if (!activeBabyId || !title.trim()) return;
+    const resolvedReminder =
+      reminderMinutes === undefined
+        ? DEFAULT_TASK_REMINDER_MINUTES
+        : reminderMinutes;
     await insertDailyChore({
       babyId: activeBabyId,
       title: title.trim(),
       sortOrder: dailyChores.length,
       createdAt: new Date().toISOString(),
       recurrence,
+      reminderMinutes: resolvedReminder,
     });
     await get().refreshChores();
   },
@@ -413,8 +438,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeDailyChore: async (id) => {
+    await cancelAllTaskNotifications(id);
     await deleteDailyChore(id);
     await get().refreshChores();
+  },
+
+  snoozeDailyChore: async (choreId, minutes) => {
+    const { dailyChores, babies, activeBabyId } = get();
+    const chore = dailyChores.find((c) => c.id === choreId);
+    if (!chore) return;
+    const baby = babies.find((b) => b.id === activeBabyId);
+    await snoozeTaskReminder(chore, baby?.name ?? '', minutes);
+  },
+
+  snoozeDailyChoreTonight: async (choreId) => {
+    const { dailyChores, babies, activeBabyId } = get();
+    const chore = dailyChores.find((c) => c.id === choreId);
+    if (!chore) return;
+    const baby = babies.find((b) => b.id === activeBabyId);
+    await snoozeTaskUntilTonight(chore, baby?.name ?? '');
   },
 
   recomputePrediction: async () => {

@@ -344,6 +344,7 @@ export async function syncHouseholdData(): Promise<SyncResult> {
             sort_order: c.sortOrder,
             created_at: c.createdAt,
             recurrence: c.recurrence,
+            reminder_minutes: c.reminderMinutes,
             updated_at: now,
             deleted_at: null,
           })),
@@ -494,6 +495,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
         sortOrder: Number(row.sort_order) || 0,
         createdAt: String(row.created_at),
         recurrence: (row.recurrence as DailyChore['recurrence']) ?? 'daily',
+        reminderMinutes:
+          typeof row.reminder_minutes === 'number' ? row.reminder_minutes : null,
       };
       await upsertById(dailyChores, chore.id, chore);
       pulled += 1;

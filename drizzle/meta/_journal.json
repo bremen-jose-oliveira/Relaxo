@@ -85,6 +85,13 @@
       "when": 1782395000000,
       "tag": "0011_sleep_insights",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1782396000000,
+      "tag": "0012_task_reminders",
+      "breakpoints": true
     }
   ]
 }

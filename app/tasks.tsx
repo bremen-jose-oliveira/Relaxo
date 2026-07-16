@@ -8,6 +8,7 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SymbolView } from 'expo-symbols';
@@ -18,8 +19,22 @@ import { BigButton } from '@/components/BigButton';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { useTranslation } from '@/lib/i18n';
 import { formatDate } from '@/lib/dateUtils';
+import { DEFAULT_TASK_REMINDER_MINUTES } from '@/lib/taskReminders';
 import { Stack } from 'expo-router';
 import type { ChoreRecurrence, DailyChore } from '@/types';
+
+const REMINDER_OPTIONS: { value: number | null; labelKey: string }[] = [
+  { value: null, labelKey: 'tasks.reminderOff' },
+  { value: 12 * 60, labelKey: 'tasks.reminderNoon' },
+  { value: DEFAULT_TASK_REMINDER_MINUTES, labelKey: 'tasks.reminderEvening' },
+  { value: 20 * 60, labelKey: 'tasks.reminderNight' },
+];
+
+function formatReminderClock(minutes: number): string {
+  const d = new Date();
+  d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
 
 export default function TasksScreen() {
   const scheme = useColorScheme() ?? 'light';
@@ -34,9 +49,14 @@ export default function TasksScreen() {
   const addDailyChore = useAppStore((s) => s.addDailyChore);
   const toggleDailyChore = useAppStore((s) => s.toggleDailyChore);
   const removeDailyChore = useAppStore((s) => s.removeDailyChore);
+  const snoozeDailyChore = useAppStore((s) => s.snoozeDailyChore);
+  const snoozeDailyChoreTonight = useAppStore((s) => s.snoozeDailyChoreTonight);
 
   const [newTitle, setNewTitle] = useState('');
   const [recurrence, setRecurrence] = useState<ChoreRecurrence>('daily');
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(
+    DEFAULT_TASK_REMINDER_MINUTES
+  );
   const [adding, setAdding] = useState(false);
 
   const today = useMemo(() => new Date(), []);
@@ -56,62 +76,106 @@ export default function TasksScreen() {
     if (!newTitle.trim()) return;
     setAdding(true);
     try {
-      await addDailyChore(newTitle, recurrence);
+      await addDailyChore(newTitle, recurrence, reminderMinutes);
       setNewTitle('');
     } finally {
       setAdding(false);
     }
   };
 
+  const openRemindLater = (chore: DailyChore) => {
+    Alert.alert(t('tasks.remindLater'), chore.title, [
+      {
+        text: t('tasks.remindIn1h'),
+        onPress: () => void snoozeDailyChore(chore.id, 60),
+      },
+      {
+        text: t('tasks.remindIn2h'),
+        onPress: () => void snoozeDailyChore(chore.id, 120),
+      },
+      {
+        text: t('tasks.remindIn3h'),
+        onPress: () => void snoozeDailyChore(chore.id, 180),
+      },
+      {
+        text: t('tasks.remindTonight'),
+        onPress: () => void snoozeDailyChoreTonight(chore.id),
+      },
+      { text: t('tasks.remindCancel'), style: 'cancel' },
+    ]);
+  };
+
   const renderItem = ({ item }: { item: DailyChore }) => {
     const done = completedSet.has(item.id);
     return (
-      <Pressable
-        onPress={() => void toggleDailyChore(item.id, !done)}
-        style={({ pressed }) => [
+      <View
+        style={[
           styles.row,
           {
             backgroundColor: colors.card,
             borderColor: colors.border,
-            opacity: pressed ? 0.85 : 1,
           },
         ]}>
-        <View
-          style={[
-            styles.checkbox,
-            {
-              borderColor: done ? colors.tint : colors.border,
-              backgroundColor: done ? colors.tint : 'transparent',
-            },
+        <Pressable
+          onPress={() => void toggleDailyChore(item.id, !done)}
+          style={({ pressed }) => [
+            styles.rowMain,
+            { opacity: pressed ? 0.85 : 1 },
           ]}>
-          {done ? (
-            <SymbolView
-              name={{ ios: 'checkmark', android: 'check', web: 'check' }}
-              tintColor="#FFF"
-              size={14}
-            />
-          ) : null}
-        </View>
-        <View style={styles.titleBlock}>
-          <Text
+          <View
             style={[
-              styles.rowTitle,
+              styles.checkbox,
               {
-                color: colors.text,
-                textDecorationLine: done ? 'line-through' : 'none',
-                opacity: done ? 0.55 : 1,
+                borderColor: done ? colors.tint : colors.border,
+                backgroundColor: done ? colors.tint : 'transparent',
               },
             ]}>
-            {item.title}
-          </Text>
-          {item.recurrence === 'once' ? (
-            <View style={[styles.onceBadge, { backgroundColor: colors.tint + '22' }]}>
-              <Text style={[styles.onceBadgeText, { color: colors.tint }]}>
-                {t('tasks.badgeOnce')}
-              </Text>
+            {done ? (
+              <SymbolView
+                name={{ ios: 'checkmark', android: 'check', web: 'check' }}
+                tintColor="#FFF"
+                size={14}
+              />
+            ) : null}
+          </View>
+          <View style={styles.titleBlock}>
+            <Text
+              style={[
+                styles.rowTitle,
+                {
+                  color: colors.text,
+                  textDecorationLine: done ? 'line-through' : 'none',
+                  opacity: done ? 0.55 : 1,
+                },
+              ]}>
+              {item.title}
+            </Text>
+            <View style={styles.metaRow}>
+              {item.recurrence === 'once' ? (
+                <View style={[styles.badge, { backgroundColor: colors.tint + '22' }]}>
+                  <Text style={[styles.badgeText, { color: colors.tint }]}>
+                    {t('tasks.badgeOnce')}
+                  </Text>
+                </View>
+              ) : null}
+              {item.reminderMinutes != null && !done ? (
+                <Text style={[styles.reminderHint, { color: colors.textSecondary }]}>
+                  {formatReminderClock(item.reminderMinutes)}
+                </Text>
+              ) : null}
             </View>
-          ) : null}
-        </View>
+          </View>
+        </Pressable>
+        {!done ? (
+          <Pressable
+            onPress={() => openRemindLater(item)}
+            hitSlop={8}
+            style={[styles.laterBtn, { borderColor: colors.border }]}>
+            <Text style={[styles.laterBtnText, { color: colors.tint }]}>
+              {t('tasks.remindLater')}
+            </Text>
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={() => void removeDailyChore(item.id)}
           hitSlop={12}
@@ -122,7 +186,7 @@ export default function TasksScreen() {
             size={18}
           />
         </Pressable>
-      </Pressable>
+      </View>
     );
   };
 
@@ -221,6 +285,35 @@ export default function TasksScreen() {
               </Pressable>
             ))}
           </View>
+          <Text style={[styles.reminderLabel, { color: colors.textSecondary }]}>
+            {t('tasks.reminderLabel')}
+          </Text>
+          <View style={styles.reminderRow}>
+            {REMINDER_OPTIONS.map(({ value, labelKey }) => {
+              const selected = reminderMinutes === value;
+              return (
+                <Pressable
+                  key={labelKey}
+                  onPress={() => setReminderMinutes(value)}
+                  style={[
+                    styles.reminderChip,
+                    {
+                      backgroundColor: selected ? colors.tint : colors.card,
+                      borderColor: colors.border,
+                    },
+                  ]}>
+                  <Text
+                    style={{
+                      color: selected ? '#FFF' : colors.text,
+                      fontWeight: '600',
+                      fontSize: 12,
+                    }}>
+                    {t(labelKey)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
           <BigButton
             title={t('tasks.add')}
             onPress={() => void handleAdd()}
@@ -270,10 +363,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 16,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  rowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.md,
+    minHeight: touchTarget.minHeight,
   },
   checkbox: {
     width: 24,
@@ -291,17 +391,36 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
-  onceBadge: {
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  badge: {
     alignSelf: 'flex-start',
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: 8,
   },
-  onceBadgeText: {
+  badgeText: {
     fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
+  },
+  reminderHint: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  laterBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  laterBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   deleteBtn: {
     minWidth: touchTarget.minHeight / 2,
@@ -355,6 +474,23 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 40,
     borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reminderLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  reminderRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  reminderChip: {
+    paddingHorizontal: spacing.sm,
+    minHeight: 34,
+    borderRadius: 10,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
