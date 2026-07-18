@@ -203,6 +203,27 @@ export async function setAppLocale(locale: AppLocale): Promise<void> {
     });
 }
 
+export async function getActiveBabyId(): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.id, DEFAULT_SETTINGS_ID))
+    .limit(1);
+  return rows[0]?.activeBabyId ?? null;
+}
+
+export async function setActiveBabyId(babyId: string | null): Promise<void> {
+  const db = await getDb();
+  await db
+    .insert(appSettings)
+    .values({ id: DEFAULT_SETTINGS_ID, locale: "system", activeBabyId: babyId })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { activeBabyId: babyId },
+    });
+}
+
 export async function deleteBaby(id: string): Promise<void> {
   const db = await getDb();
   const babySleepIds = await db
@@ -221,6 +242,18 @@ export async function deleteBaby(id: string): Promise<void> {
   await db.delete(bathEvents).where(eq(bathEvents.babyId, id));
   await db.delete(wakeEvents).where(eq(wakeEvents.babyId, id));
   await db.delete(dayContextTags).where(eq(dayContextTags.babyId, id));
+
+  const choreRows = await db
+    .select({ id: dailyChores.id })
+    .from(dailyChores)
+    .where(eq(dailyChores.babyId, id));
+  const choreIds = choreRows.map((r) => r.id);
+  if (choreIds.length > 0) {
+    await db
+      .delete(dailyChoreCompletions)
+      .where(inArray(dailyChoreCompletions.choreId, choreIds));
+  }
+  await db.delete(dailyChores).where(eq(dailyChores.babyId, id));
   await db.delete(babies).where(eq(babies.id, id));
 }
 

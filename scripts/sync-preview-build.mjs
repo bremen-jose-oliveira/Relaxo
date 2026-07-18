@@ -31,7 +31,11 @@ function fetchLatest(platform) {
       ],
       { encoding: 'utf8', cwd: join(__dirname, '..') }
     );
-    const builds = JSON.parse(raw);
+    // eas-cli may print upgrade banners before the JSON array
+    const start = raw.indexOf('[');
+    const end = raw.lastIndexOf(']');
+    if (start < 0 || end < start) return null;
+    const builds = JSON.parse(raw.slice(start, end + 1));
     const build = builds[0];
     if (!build?.id) return null;
     return {

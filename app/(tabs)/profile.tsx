@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { AppleSignInButton } from '@/components/AppleSignInButton';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors, spacing, touchTarget } from '@/constants/Colors';
@@ -28,6 +29,7 @@ import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
 import {
   prepareImportFromCsv,
   buildImportPreview,
+  extractBabyProfileFromCsv,
   type ColumnMapping,
   type ImportPreview,
   type ParsedCsv,
@@ -44,11 +46,12 @@ import {
   formatUpdateId,
   getAppVersionInfo,
   openLatestBuildInstall,
+  exitAppAfterInstallTrigger,
   reloadWithLatestUpdate,
 } from '@/lib/appUpdates';
 import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useRouter } from 'expo-router';
+import { newId } from '@/lib/newId';
 
 const ROUTINE_NAP_OPTIONS: NapGoal[] = [2, 3, 4];
 
@@ -57,6 +60,9 @@ export default function ProfileScreen() {
   const colors = Colors[scheme];
 
   const saveBaby = useAppStore((s) => s.saveBaby);
+  const removeBaby = useAppStore((s) => s.removeBaby);
+  const setActiveBaby = useAppStore((s) => s.setActiveBaby);
+  const babies = useAppStore((s) => s.babies);
   const setLocale = useAppStore((s) => s.setLocale);
   const locale = useAppStore((s) => s.locale);
   const t = useTranslation(locale);
@@ -74,14 +80,16 @@ export default function ProfileScreen() {
   const appleAvailable = useAuthStore((s) => s.appleAvailable);
   const authUser = useAuthStore((s) => s.user);
   const inviteCode = useAuthStore((s) => s.inviteCode);
+  const householdId = useAuthStore((s) => s.householdId);
+  const householdName = useAuthStore((s) => s.householdName);
   const lastSyncedAt = useAuthStore((s) => s.lastSyncedAt);
   const isSigningIn = useAuthStore((s) => s.isSigningIn);
   const isSyncing = useAuthStore((s) => s.isSyncing);
   const signInApple = useAuthStore((s) => s.signInApple);
   const signOutCloud = useAuthStore((s) => s.signOut);
+  const createHousehold = useAuthStore((s) => s.createHousehold);
   const syncNow = useAuthStore((s) => s.syncNow);
   const joinWithCode = useAuthStore((s) => s.joinWithCode);
-  const router = useRouter();
 
   const [name, setName] = useState(baby?.name ?? '');
   const [birthDate, setBirthDate] = useState(
@@ -99,6 +107,8 @@ export default function ProfileScreen() {
   );
   const [highNeed, setHighNeed] = useState(baby?.highNeed ?? false);
   const [saving, setSaving] = useState(false);
+  /** True while composing a new baby (not editing the active one). */
+  const [isAddingBaby, setIsAddingBaby] = useState(false);
 
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [parsedCsv, setParsedCsv] = useState<ParsedCsv | null>(null);
@@ -110,10 +120,14 @@ export default function ProfileScreen() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [openingBuilds, setOpeningBuilds] = useState(false);
   const [joinCode, setJoinCode] = useState('');
+  const [newHouseholdName, setNewHouseholdName] = useState('');
+  /** Baby id used while mapping an import (existing or provisional). */
+  const [importBabyId, setImportBabyId] = useState<string | null>(null);
 
   const versionInfo = useMemo(() => getAppVersionInfo(), []);
 
   useEffect(() => {
+    if (isAddingBaby) return;
     if (baby) {
       setName(baby.name);
       setBirthDate(new Date(baby.birthDate + 'T00:00:00'));
@@ -123,7 +137,7 @@ export default function ProfileScreen() {
       setEasilyOverstimulated(baby.easilyOverstimulated ?? false);
       setHighNeed(baby.highNeed ?? false);
     }
-  }, [baby]);
+  }, [baby, isAddingBaby]);
 
   const resolvedSchedule = useMemo(() => {
     if (!baby) return null;
@@ -140,6 +154,7 @@ export default function ProfileScreen() {
     setImportPreview(null);
     setManualMapping({});
     setImporting(false);
+    setImportBabyId(null);
   }, []);
 
   const handleSave = async () => {
@@ -151,8 +166,9 @@ export default function ProfileScreen() {
     setSaving(true);
     try {
       const dateStr = formatDateKey(birthDate);
+      const creating = isAddingBaby || !baby;
       await saveBaby({
-        id: baby?.id,
+        id: creating ? undefined : baby.id,
         name: name.trim(),
         birthDate: dateStr,
         napGoal: scheduleMode === 'auto' ? null : routineNaps,
@@ -160,10 +176,64 @@ export default function ProfileScreen() {
         easilyOverstimulated,
         highNeed,
       });
+      setIsAddingBaby(false);
+      if (householdId) {
+        const sync = await syncNow();
+        if (!sync.ok) {
+          Alert.alert(t('profile.saved'), sync.error ?? t('profile.syncFailed'));
+          return;
+        }
+        await initialize();
+      }
       Alert.alert(t('profile.saved'), t('profile.savedMsg'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleStartAddBaby = () => {
+    setIsAddingBaby(true);
+    setName('');
+    setBirthDate(new Date());
+    setScheduleMode('auto');
+    setRoutineNaps(3);
+    setTrackFeedingDuration(false);
+    setEasilyOverstimulated(false);
+    setHighNeed(false);
+  };
+
+  const handleSelectBaby = (id: string) => {
+    setIsAddingBaby(false);
+    void setActiveBaby(id);
+  };
+
+  const handleRemoveBaby = () => {
+    if (!baby) return;
+    Alert.alert(
+      t('profile.removeBabyTitle'),
+      t('profile.removeBabyMsg', { name: baby.name }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('profile.removeBaby'),
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const result = await removeBaby(baby.id);
+              if (!result.ok) {
+                Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
+                return;
+              }
+              setIsAddingBaby(false);
+              if (householdId) {
+                await syncNow();
+                await initialize();
+              }
+            })();
+          },
+        },
+      ]
+    );
   };
 
   const exportSummary = useMemo(() => {
@@ -224,11 +294,6 @@ export default function ProfileScreen() {
   };
 
   const handleImportData = async () => {
-    if (!baby) {
-      Alert.alert('Profile required', 'Create a baby profile before importing.');
-      return;
-    }
-
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'text/comma-separated-values', 'application/csv', '*/*'],
@@ -240,7 +305,9 @@ export default function ProfileScreen() {
       const asset = result.assets[0];
       const csvText = await FileSystem.readAsStringAsync(asset.uri);
 
-      const prepared = prepareImportFromCsv(csvText, baby.id);
+      const targetBabyId = baby?.id ?? newId();
+      setImportBabyId(targetBabyId);
+      const prepared = prepareImportFromCsv(csvText, targetBabyId);
 
       setParsedCsv(prepared.parsed);
       setAutoDetect(prepared.autoDetect);
@@ -256,8 +323,16 @@ export default function ProfileScreen() {
   };
 
   const handleBuildPreview = (mapping: ColumnMapping) => {
-    if (!parsedCsv || !baby) return;
-    const preview = buildImportPreview(parsedCsv, mapping, baby.id, 'manual');
+    if (!parsedCsv || !importBabyId) return;
+    const babyProfile = extractBabyProfileFromCsv(parsedCsv);
+    const preview = buildImportPreview(
+      parsedCsv,
+      mapping,
+      importBabyId,
+      'manual',
+      new Date(),
+      babyProfile
+    );
     setImportPreview(preview);
   };
 
@@ -266,13 +341,28 @@ export default function ProfileScreen() {
 
     setImporting(true);
     try {
-      const result = await importCareEvents(importPreview);
+      const result = await importCareEvents(importPreview, {
+        // Form name only as override; CSV Baby Name / Birth Date win by default in the store
+        babyName: name.trim() || undefined,
+      });
       setImportModalVisible(false);
       resetImportState();
+      await initialize();
+
+      const profile = importPreview.babyProfile ?? { name: null, birthDate: null };
+      let createdNote = '';
+      if (result.createdBaby) {
+        const usedName =
+          profile.name?.trim() || name.trim() || 'Baby';
+        const usedBirth =
+          profile.birthDate ??
+          'earliest imported event (adjust on Profile if needed)';
+        createdNote = ` Baby profile created as “${usedName}”, birth date ${usedBirth}.`;
+      }
 
       Alert.alert(
         'Import complete',
-        `${result.sleepAdded} sleep, ${result.feedingAdded} feeding, ${result.diaperAdded} diaper, ${result.bathAdded} bath, ${result.wakeAdded} wake added. ${result.duplicatesSkipped} duplicates skipped, ${result.failedSkipped} rows skipped.`
+        `${result.sleepAdded} sleep, ${result.feedingAdded} feeding, ${result.diaperAdded} diaper, ${result.bathAdded} bath, ${result.wakeAdded} wake added. ${result.duplicatesSkipped} duplicates skipped, ${result.failedSkipped} rows skipped.${createdNote}`
       );
     } catch (err) {
       Alert.alert(
@@ -297,7 +387,12 @@ export default function ProfileScreen() {
       return;
     }
     await initialize();
-    Alert.alert(t('profile.syncDone'));
+    const hasHousehold = Boolean(useAuthStore.getState().householdId);
+    if (hasHousehold) {
+      Alert.alert(t('profile.syncDone'));
+    } else {
+      Alert.alert(t('profile.cloudSync'), t('profile.signedInChooseHousehold'));
+    }
   };
 
   const handleSyncNow = async () => {
@@ -313,6 +408,25 @@ export default function ProfileScreen() {
     );
   };
 
+  const handleCreateHousehold = async () => {
+    const trimmed = newHouseholdName.trim();
+    if (!trimmed) {
+      Alert.alert(t('profile.householdNameRequired'));
+      return;
+    }
+    const result = await createHousehold(trimmed);
+    if (!result.ok) {
+      Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
+      return;
+    }
+    setNewHouseholdName('');
+    if (useAppStore.getState().babies.length > 0) {
+      const sync = await syncNow();
+      if (sync.ok) await initialize();
+    }
+    Alert.alert(t('profile.householdCreated'), t('profile.householdCreatedMsg'));
+  };
+
   const handleJoinHousehold = async () => {
     const result = await joinWithCode(joinCode);
     if (!result.ok) {
@@ -321,7 +435,13 @@ export default function ProfileScreen() {
     }
     setJoinCode('');
     await initialize();
-    Alert.alert(t('profile.syncDone'));
+    const count = useAppStore.getState().babies.length;
+    Alert.alert(
+      t('profile.syncDone'),
+      count > 0
+        ? t('profile.joinLoadedBabies', { count })
+        : t('profile.joinNoBabiesYet')
+    );
   };
 
   const handleSignOutCloud = async () => {
@@ -358,20 +478,35 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleOpenBuilds = async () => {
-    setOpeningBuilds(true);
-    try {
-      const outcome = await openLatestBuildInstall();
-      if (outcome.status === 'no_build') {
-        Alert.alert(t('alerts.noPreviewBuild'), t('alerts.noPreviewBuildMsg'));
-        return;
-      }
-      if (outcome.status === 'error') {
-        Alert.alert(t('alerts.updatesFailed'), outcome.message);
-      }
-    } finally {
-      setOpeningBuilds(false);
-    }
+  const handleOpenBuilds = () => {
+    Alert.alert(t('alerts.installBuildTitle'), t('alerts.installBuildMsg'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('alerts.installBuildConfirm'),
+        onPress: () => {
+          void (async () => {
+            setOpeningBuilds(true);
+            try {
+              const outcome = await openLatestBuildInstall();
+              if (outcome.status === 'no_build') {
+                Alert.alert(t('alerts.noPreviewBuild'), t('alerts.noPreviewBuildMsg'));
+                return;
+              }
+              if (outcome.status === 'error') {
+                Alert.alert(t('alerts.updatesFailed'), outcome.message);
+                return;
+              }
+              // Close so iOS/Android can replace the binary without a crash loop
+              setTimeout(() => {
+                exitAppAfterInstallTrigger();
+              }, 400);
+            } finally {
+              setOpeningBuilds(false);
+            }
+          })();
+        },
+      },
+    ]);
   };
 
   const weeks = ageInWeeks(formatDateKey(birthDate), new Date());
@@ -386,14 +521,65 @@ export default function ProfileScreen() {
           Used for age-based wake window defaults
         </Text>
 
-        <BigButton
-          title={t('profile.openTasks')}
-          variant="secondary"
-          onPress={() => router.push('/tasks')}
-          style={{ marginBottom: spacing.lg }}
-        />
+        {babies.length > 0 ? (
+          <Card style={styles.formCard}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: spacing.sm }]}>
+              {t('profile.babies')}
+            </Text>
+            <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+              {t('profile.babiesHint')}
+            </Text>
+            <View style={styles.babyChipRow}>
+              {babies.map((b) => {
+                const selected = !isAddingBaby && baby?.id === b.id;
+                return (
+                  <Pressable
+                    key={b.id}
+                    onPress={() => handleSelectBaby(b.id)}
+                    style={[
+                      styles.babyChip,
+                      {
+                        backgroundColor: selected ? colors.tint : colors.card,
+                        borderColor: colors.border,
+                      },
+                    ]}>
+                    <Text
+                      style={{
+                        color: selected ? '#FFF' : colors.text,
+                        fontWeight: '700',
+                        fontSize: 14,
+                      }}>
+                      {b.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.babyActions}>
+              <BigButton
+                title={t('profile.addBaby')}
+                variant="secondary"
+                onPress={handleStartAddBaby}
+                style={{ flex: 1, marginBottom: 0 }}
+              />
+              {baby && !isAddingBaby ? (
+                <BigButton
+                  title={t('profile.removeBaby')}
+                  variant="secondary"
+                  onPress={handleRemoveBaby}
+                  style={{ flex: 1, marginBottom: 0 }}
+                />
+              ) : null}
+            </View>
+          </Card>
+        ) : null}
 
         <Card style={styles.formCard}>
+          {isAddingBaby ? (
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: spacing.sm }]}>
+              {t('profile.addBaby')}
+            </Text>
+          ) : null}
           <Text style={[styles.label, { color: colors.textSecondary }]}>Name</Text>
           <TextInput
             value={name}
@@ -645,15 +831,18 @@ export default function ProfileScreen() {
                     email: authUser.email ?? authUser.id.slice(0, 8),
                   })}
                 </Text>
-                <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-                  {lastSyncedAt
-                    ? t('profile.lastSynced', {
-                        time: formatTime(new Date(lastSyncedAt)),
-                      })
-                    : t('profile.neverSynced')}
-                </Text>
-                {inviteCode ? (
+                {householdId && inviteCode ? (
                   <>
+                    <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+                      {lastSyncedAt
+                        ? t('profile.lastSynced', {
+                            time: formatTime(new Date(lastSyncedAt)),
+                          })
+                        : t('profile.neverSynced')}
+                    </Text>
+                    {householdName ? (
+                      <InfoRow label={t('profile.householdName')} value={householdName} />
+                    ) : null}
                     <InfoRow label={t('profile.inviteCode')} value={inviteCode} />
                     <Text
                       style={[
@@ -662,15 +851,58 @@ export default function ProfileScreen() {
                       ]}>
                       {t('profile.inviteCodeHint')}
                     </Text>
+                    <BigButton
+                      title={isSyncing ? t('profile.syncing') : t('profile.syncNow')}
+                      onPress={handleSyncNow}
+                      loading={isSyncing}
+                      disabled={isSyncing}
+                      style={{ marginBottom: spacing.sm }}
+                    />
                   </>
-                ) : null}
-                <BigButton
-                  title={isSyncing ? t('profile.syncing') : t('profile.syncNow')}
-                  onPress={handleSyncNow}
-                  loading={isSyncing}
-                  disabled={isSyncing}
-                  style={{ marginBottom: spacing.sm }}
-                />
+                ) : (
+                  <>
+                    <Text
+                      style={[
+                        styles.importHint,
+                        { color: colors.textSecondary, marginBottom: spacing.sm },
+                      ]}>
+                      {t('profile.noHouseholdYet')}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.label,
+                        { color: colors.textSecondary, marginBottom: spacing.xs },
+                      ]}>
+                      {t('profile.householdName')}
+                    </Text>
+                    <TextInput
+                      value={newHouseholdName}
+                      onChangeText={setNewHouseholdName}
+                      placeholder={t('profile.householdNamePlaceholder')}
+                      placeholderTextColor={colors.textSecondary}
+                      style={[
+                        styles.input,
+                        {
+                          color: colors.text,
+                          borderColor: colors.border,
+                          backgroundColor: colors.card,
+                          marginBottom: spacing.sm,
+                        },
+                      ]}
+                    />
+                    <BigButton
+                      title={
+                        isSyncing
+                          ? t('profile.creatingHousehold')
+                          : t('profile.createHousehold')
+                      }
+                      onPress={handleCreateHousehold}
+                      loading={isSyncing}
+                      disabled={isSyncing || !newHouseholdName.trim()}
+                      style={{ marginBottom: spacing.sm }}
+                    />
+                  </>
+                )}
                 <Text
                   style={[
                     styles.label,
@@ -708,11 +940,12 @@ export default function ProfileScreen() {
                 />
               </>
             ) : Platform.OS === 'ios' && appleAvailable ? (
-              <BigButton
-                title={isSigningIn ? t('profile.signingIn') : t('profile.signInApple')}
-                onPress={handleSignInApple}
+              <AppleSignInButton
+                label={t('profile.signInApple')}
                 loading={isSigningIn}
-                disabled={isSigningIn}
+                onPress={() => {
+                  if (!isSigningIn) void handleSignInApple();
+                }}
               />
             ) : (
               <Text style={[styles.importHint, { color: colors.textSecondary }]}>
@@ -722,45 +955,61 @@ export default function ProfileScreen() {
           </Card>
         ) : null}
 
-        {baby ? (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.data')}</Text>
-            <Text style={[styles.importHint, { color: colors.textSecondary }]}>
-              {t('profile.dataHint')}
-            </Text>
-            {exportSummary && exportSummary.total > 0 ? (
-              <Text style={[styles.exportSummary, { color: colors.textSecondary }]}>
-                {t('profile.exportReady', {
-                  total: exportSummary.total,
-                  sleep: exportSummary.sleep,
-                  feeds: exportSummary.feedings,
-                  diapers: exportSummary.diapers,
-                  baths: exportSummary.baths,
-                  wakes: exportSummary.wakes,
-                })}
-              </Text>
-            ) : null}
-            <BigButton
-              title={exporting ? t('profile.exporting') : t('profile.exportCsv')}
-              onPress={handleExport}
-              loading={exporting}
-              disabled={exporting || !exportSummary?.total}
-              style={{ marginBottom: spacing.sm }}
-            />
-            <BigButton
-              title={t('profile.importData')}
-              variant="secondary"
-              onPress={handleImportData}
-              style={{ marginBottom: spacing.lg }}
-            />
-          </>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.data')}</Text>
+        <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+          {baby ? t('profile.dataHint') : t('profile.dataHintNoProfile')}
+        </Text>
+        {exportSummary && exportSummary.total > 0 ? (
+          <Text style={[styles.exportSummary, { color: colors.textSecondary }]}>
+            {t('profile.exportReady', {
+              total: exportSummary.total,
+              sleep: exportSummary.sleep,
+              feeds: exportSummary.feedings,
+              diapers: exportSummary.diapers,
+              baths: exportSummary.baths,
+              wakes: exportSummary.wakes,
+            })}
+          </Text>
         ) : null}
+        {baby ? (
+          <BigButton
+            title={exporting ? t('profile.exporting') : t('profile.exportCsv')}
+            onPress={handleExport}
+            loading={exporting}
+            disabled={exporting || !exportSummary?.total}
+            style={{ marginBottom: spacing.sm }}
+          />
+        ) : null}
+        <BigButton
+          title={t('profile.importData')}
+          variant="secondary"
+          onPress={handleImportData}
+          style={{ marginBottom: spacing.lg }}
+        />
 
         <BigButton
-          title={baby ? t('profile.saveChanges') : t('profile.createProfile')}
+          title={
+            isAddingBaby || !baby
+              ? t('profile.createProfile')
+              : t('profile.saveChanges')
+          }
           onPress={handleSave}
           loading={saving}
         />
+        {isAddingBaby && babies.length > 0 ? (
+          <BigButton
+            title={t('common.cancel')}
+            variant="secondary"
+            onPress={() => {
+              setIsAddingBaby(false);
+              if (baby) {
+                setName(baby.name);
+                setBirthDate(new Date(baby.birthDate + 'T00:00:00'));
+              }
+            }}
+            style={{ marginTop: spacing.sm }}
+          />
+        ) : null}
       </ScrollView>
 
       <ImportPreviewModal
@@ -809,6 +1058,25 @@ const styles = StyleSheet.create({
   },
   napGoalHint: { fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
   modeRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  babyChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  babyChip: {
+    minHeight: touchTarget.minHeight * 0.75,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  babyActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
   modeChip: {
     flex: 1,
     minHeight: touchTarget.minHeight,

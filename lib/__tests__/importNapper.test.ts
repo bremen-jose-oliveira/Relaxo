@@ -8,6 +8,7 @@ import {
   parseNapperPauses,
   mapImportRow,
   stitchNapperBedtimes,
+  extractBabyProfileFromCsv,
 } from '@/lib/importNapper';
 
 const BABY_ID = 'baby-test';
@@ -107,6 +108,28 @@ describe('importNapper', () => {
       expect(sleep.length).toBeGreaterThan(0);
       expect(feedings.length).toBe(1);
       expect(diapers.length).toBe(1);
+    });
+  });
+
+  describe('extractBabyProfileFromCsv', () => {
+    it('reads Baby Name and Birth Date columns', () => {
+      const csv = `Baby Name,Birth Date,Date,Activity Type,Start Time,End Time,Notes
+Luca,2025-03-01,2025-06-01,Nap,09:15,10:30,
+`;
+      const parsed = parseCsvText(csv);
+      const profile = extractBabyProfileFromCsv(parsed);
+      expect(profile.name).toBe('Luca');
+      expect(profile.birthDate).toBe('2025-03-01');
+    });
+
+    it('ignores Household column and still imports without it', () => {
+      const csv = `Date,Activity Type,Start Time,End Time,Notes,Household
+2025-06-01,Nap,09:15,10:30,,
+`;
+      const result = prepareImportFromCsv(csv, BABY_ID, undefined, NOW);
+      expect(result.preview).toBeTruthy();
+      expect(result.preview!.sleepReadyCount).toBe(1);
+      expect(result.preview!.babyProfile?.name ?? null).toBeNull();
     });
   });
 

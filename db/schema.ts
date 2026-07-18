@@ -17,6 +17,7 @@ export const appSettings = sqliteTable('app_settings', {
   locale: text('locale', { enum: ['system', 'en', 'de'] })
     .notNull()
     .default('system'),
+  activeBabyId: text('active_baby_id'),
 });
 
 export const sleepEvents = sqliteTable(
@@ -199,6 +200,7 @@ export const syncState = sqliteTable('sync_state', {
   id: text('id').primaryKey().notNull(),
   householdId: text('household_id'),
   inviteCode: text('invite_code'),
+  householdName: text('household_name'),
   lastSyncedAt: text('last_synced_at'),
 });
 

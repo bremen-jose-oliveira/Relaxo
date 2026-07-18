@@ -2,7 +2,7 @@
   "expo": {
     "name": "Relaxo",
     "slug": "relaxo",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "relaxo",
@@ -80,11 +80,11 @@
       }
     },
     "owner": "jose_oliv",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.3",
     "updates": {
-      "url": "https://u.expo.dev/8976219b-9c26-4481-ac57-23dc6496c341"
+      "url": "https://u.expo.dev/8976219b-9c26-4481-ac57-23dc6496c341",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

@@ -102,6 +102,12 @@ describe('exportCareData', () => {
     expect(rows.find((r) => r['Activity Type'] === 'Night Sleep')?.Pauses).toContain('start');
   });
 
+  it('includes baby name and birth date on every row', () => {
+    const rows = buildExportRows(input);
+    expect(rows[0]['Baby Name']).toBe('Test Baby');
+    expect(rows[0]['Birth Date']).toBe('2025-03-01');
+  });
+
   it('exports CSV that import can auto-detect', () => {
     const csv = exportCareDataToCsv(input);
     const parsed = parseCsvText(csv);

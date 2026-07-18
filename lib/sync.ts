@@ -1,8 +1,11 @@
+import { newId } from '@/lib/newId';
 import { eq } from 'drizzle-orm';
 import { getDb, schema } from '@/db/client';
 import { getSyncState, setSyncState, clearSyncState } from '@/db/syncState';
 import {
   getAllBabies,
+  getBaby,
+  deleteBaby,
   getBathEventsForBaby,
   getDailyChoresForBaby,
   getDayContextTagsForBaby,
@@ -58,9 +61,11 @@ export type SyncResult = {
   pulled?: number;
 };
 
-/** Ensure the signed-in user has a household; create one if needed. */
-export async function ensureHousehold(): Promise<
-  { householdId: string; inviteCode: string } | { error: string }
+/** Load an existing household for this user. Never creates one. */
+export async function resolveExistingHousehold(): Promise<
+  | { householdId: string; inviteCode: string; name: string | null }
+  | { error: string }
+  | null
 > {
   const supabase = getSupabase();
   const user = await getCurrentUser();
@@ -68,12 +73,16 @@ export async function ensureHousehold(): Promise<
 
   const local = await getSyncState();
   if (local.householdId && local.inviteCode) {
-    return { householdId: local.householdId, inviteCode: local.inviteCode };
+    return {
+      householdId: local.householdId,
+      inviteCode: local.inviteCode,
+      name: local.householdName,
+    };
   }
 
   const { data: memberships, error: memErr } = await supabase
     .from('household_members')
-    .select('household_id, households(id, invite_code)')
+    .select('household_id, households(id, invite_code, name)')
     .eq('user_id', user.id)
     .limit(1);
 
@@ -83,34 +92,80 @@ export async function ensureHousehold(): Promise<
     const row = memberships[0] as {
       household_id: string;
       households:
-        | { id: string; invite_code: string }
-        | { id: string; invite_code: string }[]
+        | { id: string; invite_code: string; name: string | null }
+        | { id: string; invite_code: string; name: string | null }[]
         | null;
     };
     const hh = Array.isArray(row.households) ? row.households[0] : row.households;
     if (hh) {
-      await setSyncState({ householdId: hh.id, inviteCode: hh.invite_code });
-      return { householdId: hh.id, inviteCode: hh.invite_code };
+      await setSyncState({
+        householdId: hh.id,
+        inviteCode: hh.invite_code,
+        householdName: hh.name ?? null,
+      });
+      return {
+        householdId: hh.id,
+        inviteCode: hh.invite_code,
+        name: hh.name ?? null,
+      };
     }
   }
 
-  const inviteCode = makeInviteCode();
-  const { data: household, error: hhErr } = await supabase
-    .from('households')
-    .insert({
-      name: 'Family',
-      invite_code: inviteCode,
-      created_by: user.id,
-    })
-    .select('id, invite_code')
-    .single();
+  return null;
+}
 
-  if (hhErr || !household) {
-    return { error: hhErr?.message ?? 'Could not create household.' };
+/**
+ * For sync: require an existing household (local or remote membership).
+ * Does not auto-create — user must Create household or Join with code.
+ */
+export async function ensureHousehold(): Promise<
+  { householdId: string; inviteCode: string; name: string | null } | { error: string }
+> {
+  const resolved = await resolveExistingHousehold();
+  if (resolved === null) {
+    return { error: 'Create or join a household first.' };
+  }
+  if ('error' in resolved) return resolved;
+  return resolved;
+}
+
+/** Explicitly create a named household for the signed-in user. */
+export async function createHousehold(name: string): Promise<
+  { householdId: string; inviteCode: string; name: string } | { error: string }
+> {
+  const supabase = getSupabase();
+  const user = await getCurrentUser();
+  if (!supabase || !user) return { error: 'Not signed in.' };
+
+  const trimmed = name.trim();
+  if (!trimmed) return { error: 'Enter a household name.' };
+
+  const existing = await resolveExistingHousehold();
+  if (existing && !('error' in existing)) {
+    return {
+      householdId: existing.householdId,
+      inviteCode: existing.inviteCode,
+      name: existing.name?.trim() || trimmed,
+    };
+  }
+  if (existing && 'error' in existing) return existing;
+
+  const inviteCode = makeInviteCode();
+  const householdId = newId();
+
+  const { error: hhErr } = await supabase.from('households').insert({
+    id: householdId,
+    name: trimmed,
+    invite_code: inviteCode,
+    created_by: user.id,
+  });
+
+  if (hhErr) {
+    return { error: hhErr.message };
   }
 
   const { error: joinErr } = await supabase.from('household_members').insert({
-    household_id: household.id,
+    household_id: householdId,
     user_id: user.id,
     role: 'owner',
   });
@@ -118,16 +173,17 @@ export async function ensureHousehold(): Promise<
   if (joinErr) return { error: joinErr.message };
 
   await setSyncState({
-    householdId: household.id,
-    inviteCode: household.invite_code,
+    householdId,
+    inviteCode,
+    householdName: trimmed,
   });
 
-  return { householdId: household.id, inviteCode: household.invite_code };
+  return { householdId, inviteCode, name: trimmed };
 }
 
 export async function joinHouseholdByInviteCode(
   code: string
-): Promise<{ householdId: string; inviteCode: string } | { error: string }> {
+): Promise<{ householdId: string; inviteCode: string; name: string | null } | { error: string }> {
   const supabase = getSupabase();
   const user = await getCurrentUser();
   if (!supabase || !user) return { error: 'Not signed in.' };
@@ -135,29 +191,47 @@ export async function joinHouseholdByInviteCode(
   const normalized = code.trim().toUpperCase();
   if (normalized.length < 6) return { error: 'Invalid invite code.' };
 
-  const { data: household, error } = await supabase
-    .from('households')
-    .select('id, invite_code')
-    .eq('invite_code', normalized)
-    .maybeSingle();
-
-  if (error) return { error: error.message };
-  if (!household) return { error: 'No household found for that code.' };
-
-  const { error: joinErr } = await supabase.from('household_members').upsert({
-    household_id: household.id,
-    user_id: user.id,
-    role: 'member',
+  // SECURITY DEFINER RPC — direct SELECT on households is blocked by RLS for non-members.
+  const { data, error } = await supabase.rpc('join_household_by_invite', {
+    p_code: normalized,
   });
 
-  if (joinErr) return { error: joinErr.message };
+  if (error) {
+    const msg = error.message ?? '';
+    if (/join_household_by_invite|Could not find the function|PGRST202/i.test(msg)) {
+      return {
+        error:
+          'Join is not set up on the server yet. In Supabase SQL Editor, run supabase/0014_join_household_by_invite.sql, then try again.',
+      };
+    }
+    return { error: msg || 'Could not join household.' };
+  }
+
+  if (!data || typeof data !== 'object') {
+    return { error: 'No household found for that code.' };
+  }
+
+  const household = data as {
+    id?: string;
+    invite_code?: string;
+    name?: string | null;
+  };
+
+  if (!household.id || !household.invite_code) {
+    return { error: 'No household found for that code.' };
+  }
 
   await setSyncState({
     householdId: household.id,
     inviteCode: household.invite_code,
+    householdName: household.name ?? null,
   });
 
-  return { householdId: household.id, inviteCode: household.invite_code };
+  return {
+    householdId: household.id,
+    inviteCode: household.invite_code,
+    name: household.name ?? null,
+  };
 }
 
 async function upsertRemote(
@@ -167,7 +241,7 @@ async function upsertRemote(
   if (rows.length === 0) return { count: 0 };
   const supabase = getSupabase()!;
   const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
-  if (error) return { error: error.message, count: 0 };
+  if (error) return { error: formatRemoteError(table, error.message), count: 0 };
   return { count: rows.length };
 }
 
@@ -181,8 +255,25 @@ async function pullTable(
     .select('*')
     .eq('household_id', householdId)
     .is('deleted_at', null);
-  if (error) return { rows: [], error: error.message };
+  if (error) return { rows: [], error: formatRemoteError(table, error.message) };
   return { rows: (data ?? []) as Record<string, unknown>[] };
+}
+
+function formatRemoteError(table: string, message: string): string {
+  // PostgREST uses "schema cache" for missing tables AND missing columns — don't
+  // tell people the whole table is gone when only a column/RPC is missing.
+  if (/Could not find the ['"]?[\w]+['"]? column/i.test(message)) {
+    return (
+      `${table}: a column is missing on Supabase. In SQL Editor run ` +
+      `0011_sleep_insights.sql and 0012_task_reminders.sql, then retry. (${message})`
+    );
+  }
+  if (/Could not find the table/i.test(message)) {
+    return (
+      `${table}: table missing on Supabase. Run supabase/schema.sql in SQL Editor, then retry. (${message})`
+    );
+  }
+  return `${table}: ${message}`;
 }
 
 async function upsertById(
@@ -390,6 +481,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
       pulled += 1;
     }
 
+    pulled += await reconcileDeletedRemoteBabies(householdId);
+
     const sleepRemote = await pullTable('sleep_events', householdId);
     if (sleepRemote.error) return { ok: false, error: sleepRemote.error };
     for (const row of sleepRemote.rows) {
@@ -532,6 +625,59 @@ export async function syncHouseholdData(): Promise<SyncResult> {
 
 export async function disconnectCloudSync(): Promise<void> {
   await clearSyncState();
+}
+
+/**
+ * Soft-delete a baby on Supabase (deleted_at). No-op if not in a household.
+ * Local caller should then hard-delete from SQLite.
+ */
+export async function softDeleteBabyRemote(
+  babyId: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const user = await getCurrentUser();
+  if (!user) return { ok: true };
+
+  const ensured = await ensureHousehold();
+  if ('error' in ensured) {
+    if (ensured.error === 'Create or join a household first.') {
+      return { ok: true, error: 'no_household' };
+    }
+    return { ok: false, error: ensured.error };
+  }
+
+  const now = new Date().toISOString();
+  const supabase = getSupabase()!;
+  const { error } = await supabase
+    .from('babies')
+    .update({ deleted_at: now, updated_at: now })
+    .eq('id', babyId)
+    .eq('household_id', ensured.householdId);
+
+  if (error) return { ok: false, error: formatRemoteError('babies', error.message) };
+  return { ok: true };
+}
+
+/** Remove local babies that were soft-deleted on the server. */
+async function reconcileDeletedRemoteBabies(householdId: string): Promise<number> {
+  const supabase = getSupabase()!;
+  const { data, error } = await supabase
+    .from('babies')
+    .select('id')
+    .eq('household_id', householdId)
+    .not('deleted_at', 'is', null);
+  if (error || !data) return 0;
+
+  let removed = 0;
+  for (const row of data) {
+    const id = String(row.id);
+    const local = await getBaby(id);
+    if (local) {
+      await deleteBaby(id);
+      removed += 1;
+    }
+  }
+  return removed;
 }
 
 export { clearSyncState };

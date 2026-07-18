@@ -1,8 +1,18 @@
-import { Platform } from 'react-native';
+import { BackHandler, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import * as Updates from 'expo-updates';
 import latestPreviewBuild from '@/assets/latest-preview-build.json';
+
+/**
+ * Leave the running app after kicking off a native install.
+ * Android can force-exit; iOS backgrounds when the install sheet opens (no force-quit without a native module).
+ */
+export function exitAppAfterInstallTrigger(): void {
+  if (Platform.OS === 'android') {
+    BackHandler.exitApp();
+  }
+}
 
 export type AppVersionInfo = {
   appVersion: string;
@@ -120,6 +130,12 @@ export async function reloadWithLatestUpdate(): Promise<void> {
 /**
  * Opens the latest preview build install flow (same as scanning the EAS QR code).
  * iOS: itms-services manifest install. Android: direct APK when available, else build page.
+ *
+ * Callers should exit/close the app after a successful `opened` result so the running
+ * binary is not overwritten in the foreground (that causes open→close loops).
+ *
+ * Keep assets/latest-preview-build.json fresh (`npm run sync:preview-build` after each
+ * eas build).
  */
 export async function openLatestBuildInstall(): Promise<BuildInstallOutcome> {
   const platform = Platform.OS === 'android' ? 'android' : 'ios';

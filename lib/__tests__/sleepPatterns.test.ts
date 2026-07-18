@@ -1,4 +1,8 @@
-import { getTypicalSleepSchedule, getTypicalStartTimeForSlot } from '../sleepPatterns';
+import {
+  getTypicalSleepSchedule,
+  getTypicalStartTimeForSlot,
+  USUAL_TIMES_LOOKBACK_DAYS,
+} from '../sleepPatterns';
 import type { SleepEvent, WakeEvent } from '@/types';
 
 const babyId = 'baby-1';
@@ -100,7 +104,7 @@ describe('sleepPatterns', () => {
     expect(result.typicalTime!.getMinutes()).toBe(30);
   });
 
-  it('uses older imported logs within 120-day lookback', () => {
+  it('uses older imported logs within 120-day lookback for slot helper', () => {
     const now = new Date('2025-06-20T12:00:00');
     const events = [
       makeNap(-30, 13, 0, 60),
@@ -126,7 +130,7 @@ describe('sleepPatterns', () => {
       events.push(makeNight(day, 19, 0, 600)); // bedtime
     }
 
-    const schedule = getTypicalSleepSchedule(events, wakes, now, 3);
+    const schedule = getTypicalSleepSchedule(events, wakes, now);
     expect(schedule).toHaveLength(4);
     expect(schedule.map((s) => s.slotLabel)).toEqual([
       '1st nap',
@@ -139,5 +143,43 @@ describe('sleepPatterns', () => {
     expect(schedule[2]!.typicalTime.getHours()).toBe(16);
     expect(schedule[2]!.typicalTime.getMinutes()).toBe(30);
     expect(schedule[3]!.typicalTime.getHours()).toBe(19);
+  });
+
+  it('includes evening naps beyond 4 when logged as naps', () => {
+    const now = new Date('2025-06-20T12:00:00');
+    const events: SleepEvent[] = [];
+    const wakes: WakeEvent[] = [];
+
+    for (const day of [-1, -2, -3]) {
+      wakes.push(makeMorningWake(day, 7, 0));
+      events.push(makeNap(day, 9, 0, 45));
+      events.push(makeNap(day, 11, 30, 45));
+      events.push(makeNap(day, 14, 0, 45));
+      events.push(makeNap(day, 16, 0, 40));
+      events.push(makeNap(day, 18, 0, 35)); // evening nap ~18:00
+      events.push(makeNight(day, 20, 30, 600));
+    }
+
+    const schedule = getTypicalSleepSchedule(events, wakes, now, 4);
+    expect(schedule.map((s) => s.slotLabel)).toEqual([
+      '1st nap',
+      '2nd nap',
+      '3rd nap',
+      '4th nap',
+      '5th nap',
+      'bedtime',
+    ]);
+    expect(schedule[4]!.typicalTime.getHours()).toBe(18);
+    expect(schedule[5]!.typicalTime.getHours()).toBe(20);
+    expect(schedule[5]!.typicalTime.getMinutes()).toBe(30);
+  });
+
+  it(`usual schedule defaults to ${USUAL_TIMES_LOOKBACK_DAYS}-day lookback`, () => {
+    const now = new Date('2025-06-20T12:00:00');
+    // Outside 14-day window — should not appear in usual times
+    const events = [makeNap(-30, 13, 0, 60)];
+    const wakes = [makeMorningWake(-30, 7, 0)];
+    const schedule = getTypicalSleepSchedule(events, wakes, now);
+    expect(schedule).toHaveLength(0);
   });
 });

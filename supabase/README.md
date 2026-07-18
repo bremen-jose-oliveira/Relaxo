@@ -5,11 +5,74 @@
 1. Go to [supabase.com](https://supabase.com) → New project
 2. Prefer an **EU** region if most users are in Europe
 
-## 2. Run the SQL schema
+## 2. Apply the SQL schema
 
-In Supabase → **SQL Editor**, paste and run:
+### Schema health (no DB password)
 
-`supabase/schema.sql`
+```bash
+npm run db:supabase:status
+```
+
+Uses `EXPO_PUBLIC_SUPABASE_URL` + publishable key only.
+
+### Apply migrations from the CLI (for ongoing schema work)
+
+Postgres is separate from the HTTPS app URL. Use the **Session pooler** (IPv4); `db.<ref>.supabase.co` often fails with `ENOTFOUND`.
+
+**Option A — paste URI**
+
+1. Supabase → **Project Settings → Database → Connect → Session mode**
+2. Copy URI into `.env`:
+
+```
+SUPABASE_DB_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+```
+
+**Option B — password + region**
+
+```
+SUPABASE_DB_PASSWORD=your-database-password
+SUPABASE_DB_REGION=eu-central-1
+```
+
+(`SUPABASE_DB_REGION` is the middle part of the pooler host: `aws-0-<region>.pooler.supabase.com`. Password is set at project creation; reset it in Database settings if forgotten.)
+
+Then:
+
+```bash
+npm run db:supabase:fresh    # empty project: full schema.sql
+npm run db:supabase          # apply pending supabase/NNNN_*.sql
+npm run db:supabase:new -- add_short_name   # scaffold next change
+```
+
+### SQL Editor fallback
+
+Paste and run `supabase/schema.sql`, then any pending `supabase/NNNN_*.sql` files in order.
+
+### When you change the cloud schema
+
+Local phone DB stays on Drizzle (`npm run db:generate`). Cloud changes are SQL files:
+
+```bash
+npm run db:supabase:new -- add_short_name
+# edit the new supabase/NNNN_….sql
+# mirror the same change into supabase/schema.sql
+npm run db:supabase
+```
+
+### Migration files
+
+| File | Purpose |
+|------|---------|
+| [`schema.sql`](./schema.sql) | Full baseline for **new** projects (`db:supabase:fresh`) |
+| [`0011_sleep_insights.sql`](./0011_sleep_insights.sql) | Nap extension + day context tags |
+| [`0012_task_reminders.sql`](./0012_task_reminders.sql) | Chore reminder minutes |
+| [`0013_household_select_creator.sql`](./0013_household_select_creator.sql) | Creator can read household |
+| [`0014_join_household_by_invite.sql`](./0014_join_household_by_invite.sql) | Partner join by invite code + ensure `sleep_events` |
+
+Applied versions are stored in `public.relaxo_schema_migrations`.
+
+Without `0014`, a family member looking up an invite code always fails (RLS hides households until they are already a member), and sync may error if `sleep_events` was never created.
 
 ## 3. Enable Sign in with Apple
 
@@ -42,20 +105,23 @@ Copy `.env.example` → `.env`:
 ```
 EXPO_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+# For npm run db:supabase (pick one):
+SUPABASE_DB_URL=postgresql://postgres.xxxx:…@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
+# or: SUPABASE_DB_PASSWORD=…  and  SUPABASE_DB_REGION=eu-central-1
 ```
 
-Get both from Supabase → **Project Settings → API** (use the **Publishable** key; not the Secret key).
+Get URL + publishable key from Supabase → **Project Settings → API**.  
+For CLI migrations: **Database → Connect → Session mode** URI (or password + region).
 
-Local `.env` is for `npx expo start` only. **EAS cloud builds do not upload `.env`** — set the same keys as EAS project env vars (preview / production / development), e.g.:
+Local `.env` is for `npx expo start` and `npm run db:supabase` only. **EAS cloud builds do not upload `.env`** — set the app keys as EAS project env vars (preview / production / development), e.g.:
 
 ```bash
 eas env:create --name EXPO_PUBLIC_SUPABASE_URL --value "https://xxxx.supabase.co" --environment preview --visibility plaintext --non-interactive
 eas env:create --name EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY --value "sb_publishable_..." --environment preview --visibility sensitive --non-interactive
 ```
 
-Without those, Profile shows “Cloud sync not configured” and hides Sign in with Apple.
-
-If the project already ran an older `schema.sql`, also run [`0011_sleep_insights.sql`](./0011_sleep_insights.sql) (nap extension + day context tags).
+Without the publishable keys, Profile shows “Cloud sync not configured” and hides Sign in with Apple.  
+`SUPABASE_DB_URL` / `SUPABASE_DB_PASSWORD` stay on your machine only — never in the app binary.
 
 ## 5. Native rebuild (required)
 

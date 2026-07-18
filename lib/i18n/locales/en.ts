@@ -143,6 +143,7 @@ export const en = {
     noEvents: 'No events this day',
     noEventsHint: 'Tap + Sleep, + Feeding, + Diaper, or + Bath to add an entry.',
     setupProfile: 'Set up a baby profile to track events.',
+    openTasks: 'Daily tasks',
   },
   feeding: {
     title: 'Add feeding',
@@ -190,7 +191,7 @@ export const en = {
     segmentTrends: 'Trends',
     trends: 'Trends',
     usualTimes: 'Usual sleep times',
-    usualTimesSub: 'Typical start times from your sleep logs',
+    usualTimesSub: 'Typical start times from the last 14 days',
     lastDays: 'Last {{count}} days · {{range}}',
     totalSleep: 'Total sleep',
     perWakeDay: 'Per calendar day',
@@ -246,7 +247,7 @@ export const en = {
     napAround: 'Around average',
     napShorter: 'Shorter than average',
     dayTags: 'Day context',
-    dayTagsHint: 'Optional — tap all that apply',
+    dayTagsHint: 'Optional — tap icons that apply',
     min: '{{min}} min',
   },
   dayTags: {
@@ -346,12 +347,14 @@ export const en = {
     data: 'Data',
     dataHint:
       'Export all logs as CSV, or import a CSV from another tracker. Duplicates are skipped.',
+    dataHintNoProfile:
+      'Import a CSV to create the baby profile and load logs. Household / cloud sync is optional — import works without it. If the file has Baby Name and Birth Date (Relaxo export), those are used automatically.',
     exportCsv: 'Export CSV',
     exporting: 'Exporting…',
     importData: 'Import data',
     cloudSync: 'Cloud sync',
     cloudSyncHint:
-      'Sign in to back up and share this baby’s logs across devices. Partner can join with your invite code.',
+      'Sign in, then create a named household or join with a partner’s invite code. While you’re in a household, care logs sync to the cloud a few seconds after you save — Sync now is still there if you want it immediately.',
     cloudNotConfigured:
       'Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY to enable cloud sync.',
     signInApple: 'Sign in with Apple',
@@ -361,6 +364,15 @@ export const en = {
     syncing: 'Syncing…',
     syncDone: 'Sync complete',
     syncFailed: 'Sync failed',
+    createHousehold: 'Create household',
+    creatingHousehold: 'Creating…',
+    householdName: 'Household name',
+    householdNamePlaceholder: 'e.g. Oliv family',
+    householdNameRequired: 'Enter a household name',
+    householdCreated: 'Household ready',
+    householdCreatedMsg: 'Share your invite code so a partner can join. Add a baby profile whenever you’re ready.',
+    noHouseholdYet:
+      'Choose a name for your household, or join an existing one with a partner’s code.',
     inviteCode: 'Invite code',
     inviteCodeHint: 'Share this code so a partner can join your household.',
     joinHousehold: 'Join with code',
@@ -369,12 +381,24 @@ export const en = {
     signedInAs: 'Signed in as {{email}}',
     lastSynced: 'Last synced {{time}}',
     neverSynced: 'Not synced yet',
+    signedInChooseHousehold: 'Signed in. Create a household or join with a code to start syncing.',
     appleOnlyIos:
       'Sign in with Apple needs a real iPhone and a new preview build (not Expo Go). After installing the new build, try again.',
     saveChanges: 'Save changes',
     createProfile: 'Create profile',
     saved: 'Saved',
     savedMsg: 'Baby profile updated.',
+    babies: 'Babies',
+    babiesHint: 'Switch who you’re logging for. Everyone in the household shares these profiles.',
+    addBaby: 'Add baby',
+    removeBaby: 'Remove',
+    removeBabyTitle: 'Remove baby?',
+    removeBabyMsg:
+      'Remove {{name}} from this device and the household? Sleep and care logs for this baby will be deleted locally.',
+    joinLoadedBabies:
+      'You’re in the household. {{count}} baby profile(s) loaded — switch on Profile if needed.',
+    joinNoBabiesYet:
+      'You’re in the household. No baby profiles yet — add one here or ask your partner to sync.',
     nameRequired: 'Name required',
     nameRequiredMsg: "Please enter your baby's name.",
     exportReady: '{{total}} events ready · {{sleep}} sleep · {{feeds}} feeds · {{diapers}} diapers · {{baths}} baths · {{wakes}} wakes',
@@ -387,7 +411,7 @@ export const en = {
     checkingUpdates: 'Checking…',
     downloadBuild: 'Install latest build',
     downloadBuildHint:
-      'Starts the same install flow as the EAS QR code for your latest preview build. Use Check for updates above for day-to-day JS changes.',
+      'Installs the latest preview build (same as the EAS QR). Don’t reopen until install finishes. After each eas build, run npm run sync:preview-build.',
   },
   alerts: {
     profileRequired: 'Profile required',
@@ -410,6 +434,10 @@ export const en = {
     noPreviewBuildMsg:
       'Run eas build for preview, then npm run sync:preview-build and eas update so this button knows the latest install link.',
     openBuildFailed: 'Could not open the builds page.',
+    installBuildTitle: 'Install latest build',
+    installBuildMsg:
+      'This starts the install. Relaxo will leave the foreground so the new build can replace it — don’t reopen until install finishes. If it still opens and closes after that, delete the app once and install from the QR again.',
+    installBuildConfirm: 'Install',
   },
 } as const;
 

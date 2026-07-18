@@ -231,7 +231,10 @@ create policy "profiles_update_own" on public.profiles
   for update using (id = auth.uid());
 
 create policy "households_select_member" on public.households
-  for select using (id in (select public.user_household_ids()));
+  for select using (
+    created_by = auth.uid()
+    or id in (select public.user_household_ids())
+  );
 create policy "households_insert_auth" on public.households
   for insert with check (created_by = auth.uid());
 create policy "households_update_member" on public.households
@@ -284,3 +287,47 @@ create policy "daily_chore_completions_all" on public.daily_chore_completions
 create policy "day_context_tags_all" on public.day_context_tags
   for all using (household_id in (select public.user_household_ids()))
   with check (household_id in (select public.user_household_ids()));
+
+-- Partner join: resolve invite code without being a member yet (RLS blocks direct SELECT).
+create or replace function public.join_household_by_invite(p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  hh public.households%rowtype;
+  normalized text;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  normalized := upper(trim(both from p_code));
+  if length(normalized) < 6 then
+    raise exception 'Invalid invite code';
+  end if;
+
+  select * into hh
+  from public.households
+  where upper(invite_code) = normalized
+  limit 1;
+
+  if not found then
+    return null;
+  end if;
+
+  insert into public.household_members (household_id, user_id, role)
+  values (hh.id, auth.uid(), 'member')
+  on conflict (household_id, user_id) do nothing;
+
+  return json_build_object(
+    'id', hh.id,
+    'invite_code', hh.invite_code,
+    'name', hh.name
+  );
+end;
+$$;
+
+revoke all on function public.join_household_by_invite(text) from public;
+grant execute on function public.join_household_by_invite(text) to authenticated;

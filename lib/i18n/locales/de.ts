@@ -146,6 +146,7 @@ export const de = {
     noEvents: 'Keine Einträge an diesem Tag',
     noEventsHint: 'Tippe + Schlaf, + Mahlzeit, + Windel oder + Bad, um etwas hinzuzufügen.',
     setupProfile: 'Lege ein Babyprofil an, um Einträge zu erfassen.',
+    openTasks: 'Tägliche Aufgaben',
   },
   feeding: {
     title: 'Mahlzeit hinzufügen',
@@ -193,7 +194,7 @@ export const de = {
     segmentTrends: 'Trends',
     trends: 'Trends',
     usualTimes: 'Übliche Schlafzeiten',
-    usualTimesSub: 'Typische Startzeiten aus deinen Schlaf-Logs',
+    usualTimesSub: 'Typische Startzeiten der letzten 14 Tage',
     lastDays: 'Letzte {{count}} Tage · {{range}}',
     totalSleep: 'Gesamtschlaf',
     perWakeDay: 'Pro Kalendertag',
@@ -250,7 +251,7 @@ export const de = {
     napAround: 'Um den Durchschnitt',
     napShorter: 'Kürzer als der Durchschnitt',
     dayTags: 'Tageskontext',
-    dayTagsHint: 'Optional — tippe alles Zutreffende',
+    dayTagsHint: 'Optional — tippe passende Symbole',
     min: '{{min}} Min.',
   },
   dayTags: {
@@ -351,12 +352,14 @@ export const de = {
     data: 'Daten',
     dataHint:
       'Alle Logs als CSV exportieren oder eine CSV aus einer anderen App importieren. Duplikate werden übersprungen.',
+    dataHintNoProfile:
+      'CSV-Import legt Babyprofil und Logs an — auch ohne Haushalt/Cloud-Sync. Stehen Baby Name und Birth Date in der Datei, werden sie übernommen.',
     exportCsv: 'CSV exportieren',
     exporting: 'Exportiere…',
     importData: 'Daten importieren',
     cloudSync: 'Cloud-Sync',
     cloudSyncHint:
-      'Melde dich an, um Logs zu sichern und auf mehreren Geräten zu teilen. Partner können mit deinem Einladungscode beitreten.',
+      'Melde dich an, lege dann einen benannten Haushalt an oder tritt mit einem Einladungscode bei. Im Haushalt werden Einträge wenige Sekunden nach dem Speichern in die Cloud synchronisiert — „Jetzt synchronisieren“ geht weiterhin sofort.',
     cloudNotConfigured:
       'EXPO_PUBLIC_SUPABASE_URL und EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY setzen, um Cloud-Sync zu aktivieren.',
     signInApple: 'Mit Apple anmelden',
@@ -366,6 +369,16 @@ export const de = {
     syncing: 'Synchronisiere…',
     syncDone: 'Sync abgeschlossen',
     syncFailed: 'Sync fehlgeschlagen',
+    createHousehold: 'Haushalt anlegen',
+    creatingHousehold: 'Wird angelegt…',
+    householdName: 'Haushaltsname',
+    householdNamePlaceholder: 'z. B. Familie Oliv',
+    householdNameRequired: 'Bitte einen Haushaltsnamen eingeben',
+    householdCreated: 'Haushalt bereit',
+    householdCreatedMsg:
+      'Teile deinen Einladungscode mit einem Partner. Ein Babyprofil kannst du jederzeit anlegen.',
+    noHouseholdYet:
+      'Gib deinem Haushalt einen Namen, oder tritt mit dem Code eines Partners bei.',
     inviteCode: 'Einladungscode',
     inviteCodeHint: 'Teile diesen Code, damit ein Partner beitreten kann.',
     joinHousehold: 'Mit Code beitreten',
@@ -374,12 +387,26 @@ export const de = {
     signedInAs: 'Angemeldet als {{email}}',
     lastSynced: 'Zuletzt synchronisiert {{time}}',
     neverSynced: 'Noch nicht synchronisiert',
+    signedInChooseHousehold:
+      'Angemeldet. Lege einen Haushalt an oder tritt mit einem Code bei, um zu synchronisieren.',
     appleOnlyIos:
       'Mit Apple anmelden braucht ein echtes iPhone und einen neuen Preview-Build (nicht Expo Go). Nach der Installation erneut versuchen.',
     saveChanges: 'Änderungen speichern',
     createProfile: 'Profil anlegen',
     saved: 'Gespeichert',
     savedMsg: 'Babyprofil aktualisiert.',
+    babies: 'Babys',
+    babiesHint:
+      'Wähle, für wen du einträgst. Alle im Haushalt teilen diese Profile.',
+    addBaby: 'Baby hinzufügen',
+    removeBaby: 'Entfernen',
+    removeBabyTitle: 'Baby entfernen?',
+    removeBabyMsg:
+      '{{name}} von diesem Gerät und dem Haushalt entfernen? Schlaf- und Pflegelogs dieses Babys werden lokal gelöscht.',
+    joinLoadedBabies:
+      'Du bist im Haushalt. {{count}} Babyprofil(e) geladen — bei Bedarf unter Profil wechseln.',
+    joinNoBabiesYet:
+      'Du bist im Haushalt. Noch keine Babyprofile — hier anlegen oder Partner synchronisieren lassen.',
     nameRequired: 'Name erforderlich',
     nameRequiredMsg: 'Bitte gib den Namen deines Babys ein.',
     exportReady:
@@ -393,7 +420,7 @@ export const de = {
     checkingUpdates: 'Suche…',
     downloadBuild: 'Neuesten Build installieren',
     downloadBuildHint:
-      'Startet dieselbe Installation wie der EAS-QR-Code für den neuesten Preview-Build. Für tägliche JS-Änderungen: oben Nach Updates suchen.',
+      'Installiert den neuesten Preview-Build (wie der EAS-QR). Erst wieder öffnen, wenn die Installation fertig ist. Nach jedem eas build: npm run sync:preview-build.',
   },
   alerts: {
     profileRequired: 'Profil erforderlich',
@@ -416,5 +443,9 @@ export const de = {
     noPreviewBuildMsg:
       'Nach eas build preview: npm run sync:preview-build und eas update ausführen, damit der Install-Link bekannt ist.',
     openBuildFailed: 'Build-Seite konnte nicht geöffnet werden.',
+    installBuildTitle: 'Neuesten Build installieren',
+    installBuildMsg:
+      'Startet die Installation. Relaxo geht in den Hintergrund, damit der neue Build ersetzen kann — erst wieder öffnen, wenn die Installation fertig ist. Wenn die App danach sofort schließt: einmal löschen und per QR neu installieren.',
+    installBuildConfirm: 'Installieren',
   },
 } satisfies TranslationDict;

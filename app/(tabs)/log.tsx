@@ -7,7 +7,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, spacing } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
@@ -45,6 +45,7 @@ export default function LogScreen() {
   const locale = useAppStore((s) => s.locale);
   const t = useTranslation(locale);
   const params = useLocalSearchParams<{ day?: string }>();
+  const router = useRouter();
 
   const events = useAppStore((s) => s.events);
   const feedings = useAppStore((s) => s.feedings);
@@ -202,6 +203,13 @@ export default function LogScreen() {
             <Text style={[styles.wakeDayHint, { color: colors.textSecondary }]}>
               {t('log.dayHint')}
             </Text>
+
+            <BigButton
+              title={t('log.openTasks')}
+              variant="secondary"
+              onPress={() => router.push('/tasks')}
+              style={{ marginBottom: spacing.md }}
+            />
 
             <Text style={[styles.summaryLine, { color: colors.text }]}>
               {t('log.daySummaryLine', {

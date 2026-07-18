@@ -6,6 +6,7 @@ const { syncState } = schema;
 export type SyncState = {
   householdId: string | null;
   inviteCode: string | null;
+  householdName: string | null;
   lastSyncedAt: string | null;
 };
 
@@ -19,14 +20,21 @@ export async function getSyncState(): Promise<SyncState> {
       id: DEFAULT_ID,
       householdId: null,
       inviteCode: null,
+      householdName: null,
       lastSyncedAt: null,
     });
-    return { householdId: null, inviteCode: null, lastSyncedAt: null };
+    return {
+      householdId: null,
+      inviteCode: null,
+      householdName: null,
+      lastSyncedAt: null,
+    };
   }
   const row = rows[0];
   return {
     householdId: row.householdId ?? null,
     inviteCode: row.inviteCode ?? null,
+    householdName: row.householdName ?? null,
     lastSyncedAt: row.lastSyncedAt ?? null,
   };
 }
@@ -36,6 +44,8 @@ export async function setSyncState(patch: Partial<SyncState>): Promise<SyncState
   const next: SyncState = {
     householdId: patch.householdId !== undefined ? patch.householdId : current.householdId,
     inviteCode: patch.inviteCode !== undefined ? patch.inviteCode : current.inviteCode,
+    householdName:
+      patch.householdName !== undefined ? patch.householdName : current.householdName,
     lastSyncedAt: patch.lastSyncedAt !== undefined ? patch.lastSyncedAt : current.lastSyncedAt,
   };
   const db = await getDb();
@@ -44,6 +54,7 @@ export async function setSyncState(patch: Partial<SyncState>): Promise<SyncState
     .set({
       householdId: next.householdId,
       inviteCode: next.inviteCode,
+      householdName: next.householdName,
       lastSyncedAt: next.lastSyncedAt,
     })
     .where(eq(syncState.id, DEFAULT_ID));
@@ -51,5 +62,10 @@ export async function setSyncState(patch: Partial<SyncState>): Promise<SyncState
 }
 
 export async function clearSyncState(): Promise<void> {
-  await setSyncState({ householdId: null, inviteCode: null, lastSyncedAt: null });
+  await setSyncState({
+    householdId: null,
+    inviteCode: null,
+    householdName: null,
+    lastSyncedAt: null,
+  });
 }

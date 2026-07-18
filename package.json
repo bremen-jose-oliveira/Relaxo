@@ -1,7 +1,7 @@
 {
   "name": "relaxo",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
@@ -50,6 +50,7 @@
     "jest": "^29.7.0",
     "jest-expo": "^56.0.5",
     "jose": "^6.2.3",
+    "postgres": "^3.4.9",
     "ts-jest": "^29.4.11",
     "typescript": "~6.0.3"
   },
@@ -60,6 +61,10 @@
     "web": "expo start --web",
     "test": "jest",
     "db:generate": "drizzle-kit generate",
+    "db:supabase": "node scripts/supabase-migrate.mjs",
+    "db:supabase:fresh": "node scripts/supabase-migrate.mjs --fresh",
+    "db:supabase:status": "node scripts/supabase-status.mjs",
+    "db:supabase:new": "node scripts/supabase-new-migration.mjs",
     "build:ios:preview": "eas build --platform ios --profile preview",
     "build:android:preview": "eas build --platform android --profile preview",
     "sync:preview-build": "node scripts/sync-preview-build.mjs",

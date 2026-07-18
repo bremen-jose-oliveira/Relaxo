@@ -34,7 +34,7 @@ export function UsualSleepTimes({
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
       ) : null}
       {schedule.map((item) => (
-        <View key={item.slot} style={styles.row}>
+        <View key={item.id} style={styles.row}>
           <Text
             style={[
               compact ? styles.compactLabel : styles.label,

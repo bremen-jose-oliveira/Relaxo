@@ -14,6 +14,8 @@ import m0009 from './0009_chore_recurrence.sql';
 import m0010 from './0010_sync_state.sql';
 import m0011 from './0011_sleep_insights.sql';
 import m0012 from './0012_task_reminders.sql';
+import m0013 from './0013_household_name.sql';
+import m0014 from './0014_active_baby.sql';
 
 export default {
   journal,
@@ -31,5 +33,7 @@ export default {
     m0010,
     m0011,
     m0012,
+    m0013,
+    m0014,
   },
 };

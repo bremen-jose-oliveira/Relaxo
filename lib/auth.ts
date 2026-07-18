@@ -1,12 +1,54 @@
 import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import type { Session, User } from '@supabase/supabase-js';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export type AuthErrorResult = { error: string };
 
+export function isRunningInExpoGo(): boolean {
+  return (
+    Constants.appOwnership === 'expo' ||
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient
+  );
+}
+
+/** Native Apple Auth module linked in this binary (false in Expo Go / stub). */
+export function appleAuthNativeModulePresent(): boolean {
+  return requireOptionalNativeModule('ExpoAppleAuthentication') != null;
+}
+
+/**
+ * Official AppleAuthenticationButton needs a real native view manager.
+ * Expo Go shows a red “Unimplemented component” if we mount it anyway.
+ */
+export function canRenderNativeAppleAuthButton(): boolean {
+  return (
+    Platform.OS === 'ios' &&
+    !isRunningInExpoGo() &&
+    appleAuthNativeModulePresent()
+  );
+}
+
+/** Whether Profile should offer Sign in with Apple at all. */
 export function appleSignInAvailable(): boolean {
-  return Platform.OS === 'ios';
+  return (
+    Platform.OS === 'ios' &&
+    !isRunningInExpoGo() &&
+    appleAuthNativeModulePresent()
+  );
+}
+
+/** Refines availability after native `isAvailableAsync` (simulator / device). */
+export async function resolveAppleSignInAvailable(): Promise<boolean> {
+  if (!appleSignInAvailable()) return false;
+  if (!appleAuthNativeModulePresent()) return false;
+  try {
+    return await AppleAuthentication.isAvailableAsync();
+  } catch {
+    return false;
+  }
 }
 
 export async function getSession(): Promise<Session | null> {

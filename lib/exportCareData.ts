@@ -11,6 +11,8 @@ import type {
 import { formatDateKey } from '@/lib/dateUtils';
 
 export const EXPORT_HEADERS = [
+  'Baby Name',
+  'Birth Date',
   'Date',
   'Activity Type',
   'Start Time',
@@ -90,6 +92,7 @@ function wakeActivityType(type: WakeEvent['wakeType']): string {
 }
 
 function row(
+  baby: Baby,
   startIso: string,
   activityType: string,
   endIso: string | null,
@@ -98,6 +101,8 @@ function row(
 ): ExportRow {
   const start = new Date(startIso);
   return {
+    'Baby Name': baby.name,
+    'Birth Date': baby.birthDate,
     Date: formatDateKey(start),
     'Activity Type': activityType,
     'Start Time': formatExportDateTime(startIso),
@@ -107,14 +112,16 @@ function row(
   };
 }
 
-/** Build export rows sorted oldest → newest (Napper-compatible columns). */
+/** Build export rows sorted oldest → newest (Napper-compatible activity columns + baby profile). */
 export function buildExportRows(input: ExportCareInput): ExportRow[] {
   const rows: { sortTime: string; data: ExportRow }[] = [];
+  const { baby } = input;
 
   for (const event of input.events) {
     rows.push({
       sortTime: event.startTime,
       data: row(
+        baby,
         event.startTime,
         sleepActivityType(event.type),
         event.endTime,
@@ -128,6 +135,7 @@ export function buildExportRows(input: ExportCareInput): ExportRow[] {
     rows.push({
       sortTime: event.startTime,
       data: row(
+        baby,
         event.startTime,
         feedingActivityType(event.feedType),
         event.endTime ?? event.startTime,
@@ -139,14 +147,14 @@ export function buildExportRows(input: ExportCareInput): ExportRow[] {
   for (const event of input.diapers) {
     rows.push({
       sortTime: event.time,
-      data: row(event.time, diaperActivityType(event.diaperType), '', event.notes ?? ''),
+      data: row(baby, event.time, diaperActivityType(event.diaperType), '', event.notes ?? ''),
     });
   }
 
   for (const event of input.baths) {
     rows.push({
       sortTime: event.time,
-      data: row(event.time, 'Bath', '', event.notes ?? ''),
+      data: row(baby, event.time, 'Bath', '', event.notes ?? ''),
     });
   }
 
@@ -154,6 +162,7 @@ export function buildExportRows(input: ExportCareInput): ExportRow[] {
     rows.push({
       sortTime: event.time,
       data: row(
+        baby,
         event.time,
         wakeActivityType(event.wakeType),
         event.endTime,

@@ -26,6 +26,9 @@ import {
   getWakeEventsForBaby,
   getAppLocale,
   setAppLocale,
+  getActiveBabyId,
+  setActiveBabyId,
+  deleteBaby,
   insertBathEvent,
   insertDailyChore,
   insertDiaperEvent,
@@ -49,7 +52,7 @@ import {
   type PredictResult,
 } from '@/lib/predictNextSleep';
 import { getMorningWakeForDay } from '@/lib/dayAnchor';
-import { getImportableEvents, type ImportPreview } from '@/lib/importNapper';
+import { getImportableEvents, getPreviewBabyId, inferBirthDateFromImport, type ImportPreview } from '@/lib/importNapper';
 import { isOngoingFeeding } from '@/lib/feedingUtils';
 import { getOngoingPause, isSleepPaused } from '@/lib/sleepPauses';
 import { formatDateKey } from '@/lib/dateUtils';
@@ -65,6 +68,12 @@ import {
   snoozeTaskUntilTonight,
   syncTaskReminders,
 } from '@/lib/taskReminders';
+import { scheduleHouseholdAutoSync } from '@/lib/autoSync';
+
+/** Queue a background cloud sync when in a household (no-op otherwise). */
+function queueCloudSync() {
+  scheduleHouseholdAutoSync();
+}
 
 type AppState = {
   babies: Baby[];
@@ -86,6 +95,7 @@ type AppState = {
   initialize: () => Promise<void>;
   setActiveBaby: (id: string) => Promise<void>;
   saveBaby: (baby: Omit<Baby, 'id'> & { id?: string; napGoal?: Baby['napGoal']; trackFeedingDuration?: boolean }) => Promise<Baby>;
+  removeBaby: (id: string) => Promise<{ ok: boolean; error?: string }>;
   setLocale: (locale: AppLocale) => Promise<void>;
   refreshEvents: () => Promise<void>;
   startSleep: (type: 'nap' | 'night') => Promise<void>;
@@ -122,7 +132,10 @@ type AppState = {
   snoozeDailyChore: (choreId: string, minutes: number) => Promise<void>;
   snoozeDailyChoreTonight: (choreId: string) => Promise<void>;
   recomputePrediction: () => Promise<void>;
-  importCareEvents: (preview: ImportPreview) => Promise<{
+  importCareEvents: (
+    preview: ImportPreview,
+    options?: { babyName?: string }
+  ) => Promise<{
     sleepAdded: number;
     feedingAdded: number;
     diaperAdded: number;
@@ -130,6 +143,7 @@ type AppState = {
     wakeAdded: number;
     duplicatesSkipped: number;
     failedSkipped: number;
+    createdBaby: boolean;
   }>;
 };
 
@@ -152,13 +166,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   initialize: async () => {
     await setupNotificationChannel();
-    const [babies, locale] = await Promise.all([getAllBabies(), getAppLocale()]);
-    const activeBabyId = babies[0]?.id ?? null;
+    const [babies, locale, savedActiveId] = await Promise.all([
+      getAllBabies(),
+      getAppLocale(),
+      getActiveBabyId(),
+    ]);
+    const activeBabyId =
+      (savedActiveId && babies.some((b) => b.id === savedActiveId)
+        ? savedActiveId
+        : null) ??
+      babies[0]?.id ??
+      null;
     set({ babies, locale, activeBabyId, isLoading: false, isInitialized: true });
-    if (activeBabyId) await get().setActiveBaby(activeBabyId);
+    if (activeBabyId) {
+      await setActiveBabyId(activeBabyId);
+      await get().setActiveBaby(activeBabyId);
+    } else {
+      await setActiveBabyId(null);
+    }
   },
 
   setActiveBaby: async (id: string) => {
+    await setActiveBabyId(id);
     set({ activeBabyId: id, isLoading: true });
     const [events, sleepPauses, feedings, diapers, baths, wakes] = await Promise.all([
       getSleepEventsForBaby(id),
@@ -184,12 +213,48 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     await upsertBaby(baby);
     const babies = await getAllBabies();
-    const isFirst = babies.length === 1;
-    set({ babies, activeBabyId: isFirst ? baby.id : get().activeBabyId ?? baby.id });
-    if (isFirst || get().activeBabyId === baby.id) {
+    const shouldActivate =
+      !get().activeBabyId || get().activeBabyId === baby.id || !input.id;
+    set({
+      babies,
+      activeBabyId: shouldActivate ? baby.id : get().activeBabyId,
+    });
+    if (shouldActivate) {
       await get().setActiveBaby(baby.id);
     }
+    queueCloudSync();
     return baby;
+  },
+
+  removeBaby: async (id: string) => {
+    const { softDeleteBabyRemote } = await import('@/lib/sync');
+    const remote = await softDeleteBabyRemote(id);
+    if (!remote.ok && remote.error && remote.error !== 'no_household') {
+      return { ok: false, error: remote.error };
+    }
+    await deleteBaby(id);
+    const babies = await getAllBabies();
+    const nextId = babies[0]?.id ?? null;
+    set({
+      babies,
+      activeBabyId: nextId,
+      events: [],
+      sleepPauses: [],
+      feedings: [],
+      diapers: [],
+      baths: [],
+      wakes: [],
+      dayContextTags: [],
+      dailyChores: [],
+      completedChoreIdsToday: [],
+      prediction: null,
+    });
+    await setActiveBabyId(nextId);
+    if (nextId) {
+      await get().setActiveBaby(nextId);
+    }
+    queueCloudSync();
+    return { ok: true };
   },
 
   setLocale: async (locale) => {
@@ -226,6 +291,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     await insertSleepEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   endSleep: async () => {
@@ -240,6 +306,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const ended: SleepEvent = { ...ongoing, endTime };
     await updateSleepEvent(ended);
     await get().refreshEvents();
+    queueCloudSync();
     return ended;
   },
 
@@ -248,6 +315,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!event) return;
     await updateSleepEvent({ ...event, extension });
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   pauseSleep: async () => {
@@ -261,6 +329,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     await insertSleepPause(pause);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   resumeSleep: async () => {
@@ -269,23 +338,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!ongoing || !openPause) return;
     await updateSleepPause({ ...openPause, endTime: new Date().toISOString() });
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   addSleepEvent: async (input) => {
     const event: SleepEvent = { ...input, id: newId() };
     await insertSleepEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
     return event;
   },
 
   editSleepEvent: async (event) => {
     await updateSleepEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   removeSleepEvent: async (id) => {
     await deleteSleepEvent(id);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   toggleDayTag: async (dateKey, tag) => {
@@ -294,6 +367,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     await toggleDayContextTag(activeBabyId, dateKey, tag);
     const dayContextTags = await getDayContextTagsForBaby(activeBabyId);
     set({ dayContextTags });
+    queueCloudSync();
   },
 
   startBreastFeed: async (side) => {
@@ -312,6 +386,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     await insertFeedingEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   endBreastFeed: async () => {
@@ -319,74 +394,87 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!ongoing) return;
     await updateFeedingEvent({ ...ongoing, endTime: new Date().toISOString() });
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   addFeeding: async (input) => {
     const event: FeedingEvent = { ...input, id: newId() };
     await insertFeedingEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
     return event;
   },
 
   editFeeding: async (event) => {
     await updateFeedingEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   removeFeeding: async (id) => {
     await deleteFeedingEvent(id);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   addDiaper: async (input) => {
     const event: DiaperEvent = { ...input, id: newId() };
     await insertDiaperEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
     return event;
   },
 
   editDiaper: async (event) => {
     await updateDiaperEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   removeDiaper: async (id) => {
     await deleteDiaperEvent(id);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   addBath: async (input) => {
     const event: BathEvent = { ...input, id: newId() };
     await insertBathEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
     return event;
   },
 
   editBath: async (event) => {
     await updateBathEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   removeBath: async (id) => {
     await deleteBathEvent(id);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   addWake: async (input) => {
     const event: WakeEvent = { ...input, id: newId() };
     await insertWakeEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
     return event;
   },
 
   editWake: async (event) => {
     await updateWakeEvent(event);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   removeWake: async (id) => {
     await deleteWakeEvent(id);
     await get().refreshEvents();
+    queueCloudSync();
   },
 
   refreshChores: async () => {
@@ -429,18 +517,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       reminderMinutes: resolvedReminder,
     });
     await get().refreshChores();
+    queueCloudSync();
   },
 
   toggleDailyChore: async (choreId, completed) => {
     const dateKey = formatDateKey(new Date());
     await setDailyChoreCompleted(choreId, dateKey, completed);
     await get().refreshChores();
+    queueCloudSync();
   },
 
   removeDailyChore: async (id) => {
     await cancelAllTaskNotifications(id);
     await deleteDailyChore(id);
     await get().refreshChores();
+    queueCloudSync();
   },
 
   snoozeDailyChore: async (choreId, minutes) => {
@@ -481,21 +572,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     );
   },
 
-  importCareEvents: async (preview) => {
-    const { activeBabyId } = get();
+  importCareEvents: async (preview, options) => {
+    let { activeBabyId } = get();
+    let createdBaby = false;
+
     if (!activeBabyId) {
-      return {
-        sleepAdded: 0,
-        feedingAdded: 0,
-        diaperAdded: 0,
-        bathAdded: 0,
-        wakeAdded: 0,
-        duplicatesSkipped: 0,
-        failedSkipped: preview.totalRows,
-      };
+      const previewBabyId = getPreviewBabyId(preview) ?? newId();
+      const fromCsv = preview.babyProfile ?? { name: null, birthDate: null };
+      const birthDate =
+        fromCsv.birthDate ??
+        inferBirthDateFromImport(preview) ??
+        formatDateKey(new Date());
+      const babyName =
+        fromCsv.name?.trim() || options?.babyName?.trim() || 'Baby';
+      const baby = await get().saveBaby({
+        id: previewBabyId,
+        name: babyName,
+        birthDate,
+        napGoal: null,
+        trackFeedingDuration: false,
+        easilyOverstimulated: false,
+        highNeed: false,
+      });
+      activeBabyId = baby.id;
+      createdBaby = true;
     }
 
-    const { sleep, feedings, diapers, baths, wakes, sleepPauses } = getImportableEvents(preview);
+    const { sleep, feedings, diapers, baths, wakes, sleepPauses } =
+      getImportableEvents(preview);
     const sleepResult = await bulkInsertSleepEvents(sleep, activeBabyId);
     const [feedingResult, diaperResult, bathResult, wakeResult] = await Promise.all([
       bulkInsertFeedingEvents(feedings, activeBabyId),
@@ -529,6 +633,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     await get().refreshEvents();
+    queueCloudSync();
 
     return {
       sleepAdded: sleepResult.added,
@@ -543,6 +648,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bathResult.duplicatesSkipped +
         wakeResult.duplicatesSkipped,
       failedSkipped: preview.skippedFailed + preview.skippedOpenOld + preview.skippedUnrecognized,
+      createdBaby,
     };
   },
 }));

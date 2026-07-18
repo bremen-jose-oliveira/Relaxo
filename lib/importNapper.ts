@@ -58,6 +58,11 @@ export type MappedImportRow = {
   reason?: string;
 };
 
+export type ImportedBabyProfile = {
+  name: string | null;
+  birthDate: string | null;
+};
+
 export type ImportPreview = {
   totalRows: number;
   mapping: ColumnMapping;
@@ -74,6 +79,8 @@ export type ImportPreview = {
   skippedFailed: number;
   skippedOpenOld: number;
   timezoneNote: string;
+  /** Profile fields found in the CSV (Baby Name / Birth Date columns), if any. */
+  babyProfile?: ImportedBabyProfile;
 };
 
 export const TIMEZONE_NOTE =
@@ -87,7 +94,28 @@ export { REQUIRED_FIELDS };
 const START_PATTERNS = [/start/i, /begin/i, /from/i, /started/i];
 const END_PATTERNS = [/end/i, /stop/i, /finish/i, /\bto\b/i, /ended/i];
 const TYPE_PATTERNS = [/type/i, /category/i, /activity/i, /event/i, /kind/i, /label/i];
-const DATE_PATTERNS = [/^date$/i, /date/i, /day/i, /when/i];
+const DATE_PATTERNS = [/^date$/i, /^day$/i, /when/i];
+const BIRTH_DATE_HEADER_PATTERNS = [
+  /birth\s*date/i,
+  /birthday/i,
+  /date\s*of\s*birth/i,
+  /^dob$/i,
+  /geburtsdatum/i,
+];
+const BABY_NAME_HEADER_PATTERNS = [
+  /baby\s*name/i,
+  /child\s*name/i,
+  /infant\s*name/i,
+  /^name$/i,
+  /babyname/i,
+];
+/** Columns we never map to events (cloud / metadata). Missing is fine. */
+const IGNORED_IMPORT_HEADER_PATTERNS = [
+  /household/i,
+  /haushalt/i,
+  /invite\s*code/i,
+  /family\s*id/i,
+];
 const AMOUNT_PATTERNS = [/amount/i, /volume/i, /quantity/i, /size/i, /ml/i, /oz/i];
 const SIDE_PATTERNS = [/side/i, /breast/i];
 const NOTES_PATTERNS = [/note/i, /comment/i, /detail/i];
@@ -210,6 +238,13 @@ export function autoDetectColumns(headers: string[]): AutoDetectResult {
   const ambiguous: MappingField[] = [];
   const missing: MappingField[] = [];
 
+  // Never treat household / invite metadata as event columns
+  for (const h of headers) {
+    if (IGNORED_IMPORT_HEADER_PATTERNS.some((p) => p.test(h))) {
+      used.add(h);
+    }
+  }
+
   for (const [field, patterns, req] of [
     ['startTime', START_PATTERNS, true],
     ['endTime', END_PATTERNS, true],
@@ -237,8 +272,16 @@ export function autoDetectColumns(headers: string[]): AutoDetectResult {
       }
       ambiguous.push(field);
     } else if (result.header) {
-      mapping[field] = result.header;
-      used.add(result.header);
+      // Never map birth-date columns as the event Date field
+      if (
+        field === 'date' &&
+        BIRTH_DATE_HEADER_PATTERNS.some((p) => p.test(result.header!))
+      ) {
+        missing.push(field);
+      } else {
+        mapping[field] = result.header;
+        used.add(result.header);
+      }
     } else if (req) missing.push(field);
   }
 
@@ -690,7 +733,8 @@ export function buildImportPreview(
   mapping: ColumnMapping,
   babyId: string,
   mappingSource: 'auto' | 'manual',
-  now: Date = new Date()
+  now: Date = new Date(),
+  babyProfile: ImportedBabyProfile = { name: null, birthDate: null }
 ): ImportPreview {
   const rows = parsed.rows.map((row, i) => mapImportRow(row, i + 1, mapping, babyId, now));
   const summary = summarizePreview(rows);
@@ -702,7 +746,57 @@ export function buildImportPreview(
     rows,
     ...summary,
     timezoneNote: TIMEZONE_NOTE,
+    babyProfile,
   };
+}
+
+/** Read Baby Name / Birth Date columns when the CSV includes them (e.g. Relaxo export). */
+export function extractBabyProfileFromCsv(parsed: ParsedCsv): ImportedBabyProfile {
+  const nameHeader = parsed.headers.find((h) =>
+    BABY_NAME_HEADER_PATTERNS.some((p) => p.test(h))
+  );
+  const birthHeader = parsed.headers.find((h) =>
+    BIRTH_DATE_HEADER_PATTERNS.some((p) => p.test(h))
+  );
+
+  let name: string | null = null;
+  let birthDate: string | null = null;
+
+  for (const row of parsed.rows) {
+    if (nameHeader && !name) {
+      const raw = String(row[nameHeader] ?? '').trim();
+      if (raw) name = raw;
+    }
+    if (birthHeader && !birthDate) {
+      const parsedDate = parseFlexibleBirthDate(String(row[birthHeader] ?? '').trim());
+      if (parsedDate) birthDate = parsedDate;
+    }
+    if (name && birthDate) break;
+  }
+
+  return { name, birthDate };
+}
+
+function parseFlexibleBirthDate(raw: string): string | null {
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const isoDay = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoDay) return isoDay[1];
+  const dmy = raw.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+  if (dmy) {
+    const day = dmy[1].padStart(2, '0');
+    const month = dmy[2].padStart(2, '0');
+    return `${dmy[3]}-${month}-${day}`;
+  }
+  const t = Date.parse(raw);
+  if (!Number.isNaN(t)) {
+    const d = new Date(t);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    if (y >= 1990 && y <= 2100) return `${y}-${m}-${day}`;
+  }
+  return null;
 }
 
 export function prepareImportFromCsv(
@@ -713,12 +807,20 @@ export function prepareImportFromCsv(
 ) {
   const parsed = parseCsvText(csvText);
   const autoDetect = autoDetectColumns(parsed.headers);
+  const babyProfile = extractBabyProfileFromCsv(parsed);
 
   if (manualMapping) {
     return {
       parsed,
       autoDetect,
-      preview: buildImportPreview(parsed, manualMapping, babyId, 'manual', now),
+      preview: buildImportPreview(
+        parsed,
+        manualMapping,
+        babyId,
+        'manual',
+        now,
+        babyProfile
+      ),
       needsManualMapping: false,
     };
   }
@@ -732,13 +834,14 @@ export function prepareImportFromCsv(
         autoDetect.mapping as ColumnMapping,
         babyId,
         'auto',
-        now
+        now,
+        babyProfile
       ),
       needsManualMapping: false,
     };
   }
 
-  return { parsed, autoDetect, needsManualMapping: true };
+  return { parsed, autoDetect, needsManualMapping: true, preview: null as ImportPreview | null };
 }
 
 export function stitchNapperBedtimes(
@@ -812,6 +915,44 @@ export function getImportableEvents(preview: ImportPreview): {
     wakes,
     sleepPauses,
   };
+}
+
+/** Earliest event date (YYYY-MM-DD) from import-ready rows — used as a provisional birth date. */
+export function inferBirthDateFromImport(preview: ImportPreview): string | null {
+  let earliest: number | null = null;
+  for (const row of preview.rows) {
+    if (row.outcome !== 'ready' && row.outcome !== 'ongoing') continue;
+    const start =
+      row.sleepEvent?.startTime ??
+      row.feedingEvent?.time ??
+      row.diaperEvent?.time ??
+      row.bathEvent?.time ??
+      row.wakeEvent?.time;
+    if (!start) continue;
+    const t = new Date(start).getTime();
+    if (Number.isNaN(t)) continue;
+    if (earliest == null || t < earliest) earliest = t;
+  }
+  if (earliest == null) return null;
+  const d = new Date(earliest);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Baby id stamped on mapped events in the preview (if any). */
+export function getPreviewBabyId(preview: ImportPreview): string | null {
+  for (const row of preview.rows) {
+    const id =
+      row.sleepEvent?.babyId ??
+      row.feedingEvent?.babyId ??
+      row.diaperEvent?.babyId ??
+      row.bathEvent?.babyId ??
+      row.wakeEvent?.babyId;
+    if (id) return id;
+  }
+  return null;
 }
 
 export const MAPPING_FIELD_LABELS: Record<MappingField, string> = {
