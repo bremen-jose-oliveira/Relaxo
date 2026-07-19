@@ -80,8 +80,13 @@ export function DayContextChips({
               <SymbolView
                 name={DAY_CONTEXT_ICONS[tag]}
                 tintColor={on ? '#FFFFFF' : colors.text}
-                size={22}
+                size={18}
               />
+              <Text
+                style={[styles.chipLabel, { color: on ? '#FFFFFF' : colors.text }]}
+                numberOfLines={1}>
+                {label}
+              </Text>
             </Pressable>
           );
         })}
@@ -95,11 +100,18 @@ const styles = StyleSheet.create({
   hint: { fontSize: 13, marginBottom: spacing.sm },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
-    width: touchTarget.minHeight,
-    height: touchTarget.minHeight,
-    borderRadius: 14,
-    borderWidth: 1,
+    minHeight: touchTarget.minHeight,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  chipLabel: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

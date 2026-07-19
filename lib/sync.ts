@@ -292,7 +292,7 @@ async function upsertById(
 }
 
 /**
- * Full household sync: push local → cloud, then pull cloud → local.
+ * Full household sync: pull babies first, then push local → cloud, then pull events.
  * Upsert by primary key (last sync wins for overlapping edits).
  */
 export async function syncHouseholdData(): Promise<SyncResult> {
@@ -311,6 +311,29 @@ export async function syncHouseholdData(): Promise<SyncResult> {
   let pulled = 0;
 
   try {
+    // Pull household babies first so join/sync loads shared profiles before any push.
+    const remoteBabiesEarly = await pullTable('babies', householdId);
+    if (remoteBabiesEarly.error) {
+      return { ok: false, error: remoteBabiesEarly.error };
+    }
+    for (const row of remoteBabiesEarly.rows) {
+      const baby: Baby = {
+        id: String(row.id),
+        name: String(row.name),
+        birthDate: String(row.birth_date),
+        napGoal:
+          row.nap_goal === 2 || row.nap_goal === 3 || row.nap_goal === 4
+            ? (row.nap_goal as 2 | 3 | 4)
+            : null,
+        trackFeedingDuration: Number(row.track_feeding_duration) === 1,
+        easilyOverstimulated: Number(row.easily_overstimulated) === 1,
+        highNeed: Number(row.high_need) === 1,
+      };
+      await upsertBaby(baby);
+      pulled += 1;
+    }
+    pulled += await reconcileDeletedRemoteBabies(householdId);
+
     const babies = await getAllBabies();
     const babyPush = await upsertRemote(
       'babies',
@@ -460,28 +483,6 @@ export async function syncHouseholdData(): Promise<SyncResult> {
         pushed += result.count;
       }
     }
-
-    const remoteBabies = await pullTable('babies', householdId);
-    if (remoteBabies.error) return { ok: false, error: remoteBabies.error };
-
-    for (const row of remoteBabies.rows) {
-      const baby: Baby = {
-        id: String(row.id),
-        name: String(row.name),
-        birthDate: String(row.birth_date),
-        napGoal:
-          row.nap_goal === 2 || row.nap_goal === 3 || row.nap_goal === 4
-            ? (row.nap_goal as 2 | 3 | 4)
-            : null,
-        trackFeedingDuration: Number(row.track_feeding_duration) === 1,
-        easilyOverstimulated: Number(row.easily_overstimulated) === 1,
-        highNeed: Number(row.high_need) === 1,
-      };
-      await upsertBaby(baby);
-      pulled += 1;
-    }
-
-    pulled += await reconcileDeletedRemoteBabies(householdId);
 
     const sleepRemote = await pullTable('sleep_events', householdId);
     if (sleepRemote.error) return { ok: false, error: sleepRemote.error };

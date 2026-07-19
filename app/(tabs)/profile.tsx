@@ -516,9 +516,9 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: colors.text }]}>Baby Profile</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{t('profile.title')}</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Used for age-based wake window defaults
+          {t('profile.subtitle')}
         </Text>
 
         {babies.length > 0 ? (
@@ -574,17 +574,30 @@ export default function ProfileScreen() {
           </Card>
         ) : null}
 
+        {babies.length === 0 && !isAddingBaby ? (
+          <Card style={styles.formCard}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('profile.noBabyYet')}
+            </Text>
+            <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+              {t('profile.noBabyYetHint')}
+            </Text>
+            <BigButton title={t('profile.createProfile')} onPress={handleStartAddBaby} />
+          </Card>
+        ) : null}
+
+        {(baby && !isAddingBaby) || isAddingBaby ? (
         <Card style={styles.formCard}>
           {isAddingBaby ? (
             <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: spacing.sm }]}>
               {t('profile.addBaby')}
             </Text>
           ) : null}
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Name</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>{t('profile.name')}</Text>
           <TextInput
             value={name}
             onChangeText={setName}
-            placeholder="Baby's name"
+            placeholder={t('profile.namePlaceholder')}
             placeholderTextColor={colors.textSecondary}
             style={[
               styles.input,
@@ -593,7 +606,7 @@ export default function ProfileScreen() {
           />
 
           <DatePickerField
-            label="Birth date"
+            label={t('profile.birthDate')}
             value={birthDate}
             onChange={setBirthDate}
             maximumDate={new Date()}
@@ -728,8 +741,14 @@ export default function ProfileScreen() {
               trackColor={{ false: colors.border, true: colors.tint }}
             />
           </View>
+        </Card>
+        ) : null}
 
-          <Text style={[styles.label, { color: colors.textSecondary, marginTop: spacing.lg }]}>
+        <Card style={styles.formCard}>
+          <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: spacing.sm }]}>
+            {t('profile.app')}
+          </Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>
             {t('profile.language')}
           </Text>
           <View style={styles.modeRow}>
@@ -761,12 +780,6 @@ export default function ProfileScreen() {
               </Pressable>
             ))}
           </View>
-        </Card>
-
-        <Card style={styles.formCard}>
-          <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: spacing.sm }]}>
-            {t('profile.app')}
-          </Text>
           <InfoRow label={t('profile.appVersion')} value={versionInfo.appVersion} />
           {versionInfo.runtimeVersion ? (
             <InfoRow label={t('profile.runtimeVersion')} value={versionInfo.runtimeVersion} />
@@ -987,16 +1000,18 @@ export default function ProfileScreen() {
           style={{ marginBottom: spacing.lg }}
         />
 
-        <BigButton
-          title={
-            isAddingBaby || !baby
-              ? t('profile.createProfile')
-              : t('profile.saveChanges')
-          }
-          onPress={handleSave}
-          loading={saving}
-        />
-        {isAddingBaby && babies.length > 0 ? (
+        {(baby && !isAddingBaby) || isAddingBaby ? (
+          <BigButton
+            title={
+              isAddingBaby || !baby
+                ? t('profile.createProfile')
+                : t('profile.saveChanges')
+            }
+            onPress={handleSave}
+            loading={saving}
+          />
+        ) : null}
+        {isAddingBaby ? (
           <BigButton
             title={t('common.cancel')}
             variant="secondary"

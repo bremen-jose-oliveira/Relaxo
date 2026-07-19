@@ -247,7 +247,7 @@ export const en = {
     napAround: 'Around average',
     napShorter: 'Shorter than average',
     dayTags: 'Day context',
-    dayTagsHint: 'Optional — tap icons that apply',
+    dayTagsHint: 'Optional — tap tags that apply',
     min: '{{min}} min',
   },
   dayTags: {
@@ -318,7 +318,11 @@ export const en = {
     subtitle: "Your baby's details",
     openTasks: 'Daily tasks',
     name: 'Name',
+    namePlaceholder: "Baby's name",
     birthDate: 'Birth date',
+    noBabyYet: 'No baby profile yet',
+    noBabyYetHint:
+      'Nothing is created until you tap Create profile — or join a household and sync to load a shared baby.',
     napSchedule: 'Nap schedule',
     automatic: 'Automatic',
     setRoutine: 'Set routine',

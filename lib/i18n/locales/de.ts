@@ -251,7 +251,7 @@ export const de = {
     napAround: 'Um den Durchschnitt',
     napShorter: 'Kürzer als der Durchschnitt',
     dayTags: 'Tageskontext',
-    dayTagsHint: 'Optional — tippe passende Symbole',
+    dayTagsHint: 'Optional — tippe passende Tags',
     min: '{{min}} Min.',
   },
   dayTags: {
@@ -322,7 +322,11 @@ export const de = {
     subtitle: 'Angaben zu deinem Baby',
     openTasks: 'Tägliche Aufgaben',
     name: 'Name',
+    namePlaceholder: 'Name des Babys',
     birthDate: 'Geburtsdatum',
+    noBabyYet: 'Noch kein Babyprofil',
+    noBabyYetHint:
+      'Es wird nichts angelegt, bis du auf Profil anlegen tippst — oder einem Haushalt beitrittst und synchronisierst, um ein geteiltes Baby zu laden.',
     napSchedule: 'Nickerchen-Plan',
     automatic: 'Automatisch',
     setRoutine: 'Routine festlegen',
