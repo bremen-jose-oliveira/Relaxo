@@ -356,17 +356,26 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeSleepEvent: async (id) => {
+    const { softDeleteSleepEventRemote } = await import('@/lib/sync');
+    await softDeleteSleepEventRemote(id);
     await deleteSleepEvent(id);
     await get().refreshEvents();
     queueCloudSync();
   },
 
   toggleDayTag: async (dateKey, tag) => {
-    const { activeBabyId } = get();
+    const { activeBabyId, dayContextTags } = get();
     if (!activeBabyId) return;
+    const existing = dayContextTags.find(
+      (row) => row.dateKey === dateKey && row.tag === tag
+    );
+    if (existing) {
+      const { queueRemoteDelete } = await import('@/lib/sync');
+      await queueRemoteDelete('day_context_tags', [existing.id]);
+    }
     await toggleDayContextTag(activeBabyId, dateKey, tag);
-    const dayContextTags = await getDayContextTagsForBaby(activeBabyId);
-    set({ dayContextTags });
+    const nextTags = await getDayContextTagsForBaby(activeBabyId);
+    set({ dayContextTags: nextTags });
     queueCloudSync();
   },
 
@@ -412,6 +421,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeFeeding: async (id) => {
+    const { queueRemoteDelete } = await import('@/lib/sync');
+    await queueRemoteDelete('feeding_events', [id]);
     await deleteFeedingEvent(id);
     await get().refreshEvents();
     queueCloudSync();
@@ -432,6 +443,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeDiaper: async (id) => {
+    const { queueRemoteDelete } = await import('@/lib/sync');
+    await queueRemoteDelete('diaper_events', [id]);
     await deleteDiaperEvent(id);
     await get().refreshEvents();
     queueCloudSync();
@@ -452,6 +465,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeBath: async (id) => {
+    const { queueRemoteDelete } = await import('@/lib/sync');
+    await queueRemoteDelete('bath_events', [id]);
     await deleteBathEvent(id);
     await get().refreshEvents();
     queueCloudSync();
@@ -472,6 +487,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeWake: async (id) => {
+    const { queueRemoteDelete } = await import('@/lib/sync');
+    await queueRemoteDelete('wake_events', [id]);
     await deleteWakeEvent(id);
     await get().refreshEvents();
     queueCloudSync();
@@ -522,12 +539,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   toggleDailyChore: async (choreId, completed) => {
     const dateKey = formatDateKey(new Date());
-    await setDailyChoreCompleted(choreId, dateKey, completed);
+    const result = await setDailyChoreCompleted(choreId, dateKey, completed);
+    const { queueRemoteDelete } = await import('@/lib/sync');
+    if (result.removedChoreId) {
+      await queueRemoteDelete('daily_chores', [result.removedChoreId]);
+    }
+    if (result.removedCompletionId) {
+      await queueRemoteDelete('daily_chore_completions', [result.removedCompletionId]);
+    }
     await get().refreshChores();
     queueCloudSync();
   },
 
   removeDailyChore: async (id) => {
+    const { queueRemoteDelete } = await import('@/lib/sync');
+    await queueRemoteDelete('daily_chores', [id]);
     await cancelAllTaskNotifications(id);
     await deleteDailyChore(id);
     await get().refreshChores();

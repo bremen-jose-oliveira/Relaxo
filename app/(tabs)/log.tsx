@@ -302,8 +302,13 @@ export default function LogScreen() {
         initial={editingSleep}
         babyId={baby.id}
         onSave={async (payload) => {
-          if (editingSleep) await editSleepEvent({ ...payload, id: editingSleep.id });
-          else await addSleepEvent(payload);
+          if (editingSleep) {
+            await editSleepEvent({
+              ...payload,
+              id: editingSleep.id,
+              extension: editingSleep.extension,
+            });
+          } else await addSleepEvent(payload);
           setSleepOpen(false);
           setEditingSleep(null);
         }}

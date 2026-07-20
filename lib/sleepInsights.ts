@@ -26,16 +26,25 @@ export type DaySleepInsights = {
 
 export type WeekSleepMetrics = {
   avgNapMinutes: number | null;
+  /** Total daytime (nap) minutes in the compared window. */
   daytimeSleepMinutes: number;
+  /** Daytime minutes averaged per day in the window (fairer mid-week). */
+  avgDaytimePerDay: number | null;
   avgWakeWindowMinutes: number | null;
   napCount: number;
+  avgNapsPerDay: number | null;
+  daysCompared: number;
 };
 
 export type WeekCompare = {
   avgNapDelta: number | null;
   daytimeSleepDelta: number;
+  avgDaytimePerDayDelta: number | null;
   avgWakeWindowDelta: number | null;
   napCountDelta: number;
+  napsPerDayDelta: number | null;
+  /** How many calendar days are included (Mon→today). */
+  daysCompared: number;
   thisWeek: WeekSleepMetrics;
   lastWeek: WeekSleepMetrics;
 };
@@ -175,8 +184,10 @@ function metricsForDayRange(
   const wakeWindows: number[] = [];
   let cursor = startOfDay(rangeStart);
   const endDay = startOfDay(addDays(rangeEndExclusive, -1));
+  let daysCompared = 0;
 
   while (cursor.getTime() <= endDay.getTime()) {
+    daysCompared += 1;
     const dayInsights = getDaySleepInsights(events, pauses, wakes, cursor, now);
     daytimeSleepMinutes += dayInsights.daytimeSleepMinutes;
     if (dayInsights.avgWakeWindowMinutes != null) {
@@ -188,12 +199,22 @@ function metricsForDayRange(
   return {
     avgNapMinutes: average(durations),
     daytimeSleepMinutes,
+    avgDaytimePerDay:
+      daysCompared > 0 ? Math.round(daytimeSleepMinutes / daysCompared) : null,
     avgWakeWindowMinutes: average(wakeWindows),
     napCount: naps.length,
+    avgNapsPerDay:
+      daysCompared > 0
+        ? Math.round((naps.length / daysCompared) * 10) / 10
+        : null,
+    daysCompared,
   };
 }
 
-/** Compare calendar Mon–Sun this week vs previous week (relative to `now`). */
+/**
+ * Compare this week so far (Mon → today) with the same weekday span last week.
+ * Avoids comparing a partial current week against a full previous week.
+ */
 export function compareSleepWeeks(
   events: SleepEvent[],
   pauses: SleepPause[],
@@ -204,15 +225,18 @@ export function compareSleepWeeks(
   const dayOfWeek = today.getDay(); // 0 Sun
   const daysSinceMonday = (dayOfWeek + 6) % 7;
   const thisWeekStart = addDays(today, -daysSinceMonday);
+  // Exclusive end = tomorrow midnight → includes today.
+  const thisWeekEndExclusive = addDays(today, 1);
   const lastWeekStart = addDays(thisWeekStart, -7);
-  const thisWeekEnd = addDays(thisWeekStart, 7);
+  const lastWeekEndExclusive = addDays(thisWeekEndExclusive, -7);
+  const daysCompared = daysSinceMonday + 1;
 
   const thisWeek = metricsForDayRange(
     events,
     pauses,
     wakes,
     thisWeekStart,
-    thisWeekEnd,
+    thisWeekEndExclusive,
     now
   );
   const lastWeek = metricsForDayRange(
@@ -220,24 +244,43 @@ export function compareSleepWeeks(
     pauses,
     wakes,
     lastWeekStart,
-    thisWeekStart,
+    lastWeekEndExclusive,
     now
   );
 
   return {
     thisWeek,
     lastWeek,
+    daysCompared,
     avgNapDelta:
       thisWeek.avgNapMinutes != null && lastWeek.avgNapMinutes != null
         ? thisWeek.avgNapMinutes - lastWeek.avgNapMinutes
         : null,
     daytimeSleepDelta: thisWeek.daytimeSleepMinutes - lastWeek.daytimeSleepMinutes,
+    avgDaytimePerDayDelta:
+      thisWeek.avgDaytimePerDay != null && lastWeek.avgDaytimePerDay != null
+        ? thisWeek.avgDaytimePerDay - lastWeek.avgDaytimePerDay
+        : null,
     avgWakeWindowDelta:
       thisWeek.avgWakeWindowMinutes != null && lastWeek.avgWakeWindowMinutes != null
         ? thisWeek.avgWakeWindowMinutes - lastWeek.avgWakeWindowMinutes
         : null,
     napCountDelta: thisWeek.napCount - lastWeek.napCount,
+    napsPerDayDelta:
+      thisWeek.avgNapsPerDay != null && lastWeek.avgNapsPerDay != null
+        ? Math.round((thisWeek.avgNapsPerDay - lastWeek.avgNapsPerDay) * 10) / 10
+        : null,
   };
+}
+
+/** Format minutes as "2h 15m" / "45m" for week compare UI. */
+export function formatMinutesCompact(totalMinutes: number): string {
+  const mins = Math.max(0, Math.round(totalMinutes));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h <= 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
 }
 
 export function getSleepStats(

@@ -408,6 +408,11 @@ export async function updateSleepPause(pause: SleepPause): Promise<void> {
     .where(eq(sleepPauses.id, pause.id));
 }
 
+export async function deleteSleepPause(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(sleepPauses).where(eq(sleepPauses.id, id));
+}
+
 export async function bulkInsertSleepPauses(
   pauses: Omit<SleepPause, "id">[],
 ): Promise<number> {
@@ -785,6 +790,71 @@ export async function getDailyChoreCompletionsForDate(
   return rows.map(toDailyChoreCompletion);
 }
 
+export async function getDailyChoreCompletionsForBaby(
+  babyId: string,
+): Promise<DailyChoreCompletion[]> {
+  const db = await getDb();
+  const chores = await getDailyChoresForBaby(babyId);
+  if (chores.length === 0) return [];
+
+  const choreIds = chores.map((c) => c.id);
+  const rows = await db
+    .select()
+    .from(dailyChoreCompletions)
+    .where(inArray(dailyChoreCompletions.choreId, choreIds));
+  return rows.map(toDailyChoreCompletion);
+}
+
+export async function deleteDailyChoreCompletion(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(dailyChoreCompletions).where(eq(dailyChoreCompletions.id, id));
+}
+
+export async function upsertDailyChoreCompletion(
+  completion: DailyChoreCompletion,
+): Promise<void> {
+  const db = await getDb();
+  const existing = await db
+    .select()
+    .from(dailyChoreCompletions)
+    .where(eq(dailyChoreCompletions.id, completion.id))
+    .limit(1);
+  if (existing.length > 0) {
+    await db
+      .update(dailyChoreCompletions)
+      .set({
+        choreId: completion.choreId,
+        dateKey: completion.dateKey,
+        completedAt: completion.completedAt,
+      })
+      .where(eq(dailyChoreCompletions.id, completion.id));
+  } else {
+    await db.insert(dailyChoreCompletions).values(completion);
+  }
+}
+
+/** Returns the completion row id if one was removed (for cloud tombstone). */
+export async function clearDailyChoreCompletionForDate(
+  choreId: string,
+  dateKey: string,
+): Promise<string | null> {
+  const db = await getDb();
+  const existing = await db
+    .select()
+    .from(dailyChoreCompletions)
+    .where(
+      and(
+        eq(dailyChoreCompletions.choreId, choreId),
+        eq(dailyChoreCompletions.dateKey, dateKey),
+      ),
+    )
+    .limit(1);
+  if (existing.length === 0) return null;
+  const id = existing[0].id;
+  await db.delete(dailyChoreCompletions).where(eq(dailyChoreCompletions.id, id));
+  return id;
+}
+
 export async function insertDailyChore(
   chore: Omit<DailyChore, "id"> & { id?: string },
 ): Promise<DailyChore> {
@@ -815,30 +885,35 @@ export async function setDailyChoreCompleted(
   choreId: string,
   dateKey: string,
   completed: boolean,
-): Promise<void> {
+): Promise<{ removedChoreId?: string; removedCompletionId?: string }> {
   const chore = await getDailyChoreById(choreId);
-  if (!chore) return;
+  if (!chore) return {};
 
   if (shouldRemoveChoreOnComplete(chore.recurrence, completed)) {
     await deleteDailyChore(choreId);
-    return;
+    return { removedChoreId: choreId };
   }
 
   if (chore.recurrence === "once") {
-    return;
+    return {};
   }
 
   const db = await getDb();
   if (!completed) {
-    await db
-      .delete(dailyChoreCompletions)
+    const existing = await db
+      .select()
+      .from(dailyChoreCompletions)
       .where(
         and(
           eq(dailyChoreCompletions.choreId, choreId),
           eq(dailyChoreCompletions.dateKey, dateKey),
         ),
-      );
-    return;
+      )
+      .limit(1);
+    if (existing.length === 0) return {};
+    const id = existing[0].id;
+    await db.delete(dailyChoreCompletions).where(eq(dailyChoreCompletions.id, id));
+    return { removedCompletionId: id };
   }
 
   const existing = await db
@@ -852,7 +927,7 @@ export async function setDailyChoreCompleted(
     )
     .limit(1);
 
-  if (existing.length > 0) return;
+  if (existing.length > 0) return {};
 
   await db.insert(dailyChoreCompletions).values({
     id: newId(),
@@ -860,6 +935,7 @@ export async function setDailyChoreCompleted(
     dateKey,
     completedAt: new Date().toISOString(),
   });
+  return {};
 }
 
 // ─── Day context tags ────────────────────────────────────────────────────────

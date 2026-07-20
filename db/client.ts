@@ -17,13 +17,20 @@ export async function getDb(): Promise<RelaxoDatabase> {
 
   if (!initPromise) {
     initPromise = (async () => {
-      expoDb = await SQLite.openDatabaseAsync(DB_NAME);
-      // PRAGMA must run outside Drizzle's migration transaction (BEGIN/COMMIT).
-      await expoDb.execAsync('PRAGMA journal_mode = WAL;');
-      const drizzleDb = drizzle(expoDb, { schema });
-      await migrate(drizzleDb, migrations);
-      db = drizzleDb;
-      return drizzleDb;
+      try {
+        expoDb = await SQLite.openDatabaseAsync(DB_NAME);
+        await expoDb.execAsync('PRAGMA journal_mode = WAL;');
+        await expoDb.execAsync('PRAGMA foreign_keys = ON;');
+        const drizzleDb = drizzle(expoDb, { schema });
+        await migrate(drizzleDb, migrations);
+        db = drizzleDb;
+        return drizzleDb;
+      } catch (err) {
+        initPromise = null;
+        db = null;
+        expoDb = null;
+        throw err;
+      }
     })();
   }
 

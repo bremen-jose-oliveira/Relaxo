@@ -22,6 +22,7 @@ import { resolveLocale, useTranslation } from '@/lib/i18n';
 import { resolveNapGoal } from '@/lib/napSchedule';
 import { getTypicalSleepSchedule } from '@/lib/sleepPatterns';
 import { UsualSleepTimes } from '@/components/UsualSleepTimes';
+import { WeekCompareCard } from '@/components/WeekCompareCard';
 import {
   compareSleepWeeks,
   formatBabyAge,
@@ -217,40 +218,7 @@ export default function HistoryScreen() {
           </Text>
         </Card>
 
-        <Card style={styles.chartCard}>
-          <Text style={[styles.chartLabel, { color: colors.text }]}>{t('history.weekCompare')}</Text>
-          <Text style={[styles.chartSub, { color: colors.textSecondary, marginBottom: spacing.sm }]}>
-            {t('history.weekCompareHint')}
-          </Text>
-          {weekCompare.avgNapDelta != null ? (
-            <Text style={[styles.insightLine, { color: colors.text }]}>
-              {t('history.deltaAvgNap', {
-                sign: weekCompare.avgNapDelta > 0 ? '+' : '',
-                min: weekCompare.avgNapDelta,
-              })}
-            </Text>
-          ) : null}
-          <Text style={[styles.insightLine, { color: colors.text }]}>
-            {t('history.deltaDaytime', {
-              sign: weekCompare.daytimeSleepDelta > 0 ? '+' : '',
-              min: weekCompare.daytimeSleepDelta,
-            })}
-          </Text>
-          {weekCompare.avgWakeWindowDelta != null ? (
-            <Text style={[styles.insightLine, { color: colors.text }]}>
-              {t('history.deltaWake', {
-                sign: weekCompare.avgWakeWindowDelta > 0 ? '+' : '',
-                min: weekCompare.avgWakeWindowDelta,
-              })}
-            </Text>
-          ) : null}
-          <Text style={[styles.insightLine, { color: colors.text }]}>
-            {t('history.deltaNaps', {
-              sign: weekCompare.napCountDelta > 0 ? '+' : '',
-              count: weekCompare.napCountDelta,
-            })}
-          </Text>
-        </Card>
+        <WeekCompareCard compare={weekCompare} t={t} />
 
         <Card style={styles.chartCard}>
           <Text style={[styles.chartLabel, { color: colors.text }]}>{t('history.statistics')}</Text>

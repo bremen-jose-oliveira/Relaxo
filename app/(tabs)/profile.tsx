@@ -85,6 +85,7 @@ export default function ProfileScreen() {
   const lastSyncedAt = useAuthStore((s) => s.lastSyncedAt);
   const isSigningIn = useAuthStore((s) => s.isSigningIn);
   const isSyncing = useAuthStore((s) => s.isSyncing);
+  const lastSyncError = useAuthStore((s) => s.lastSyncError);
   const signInApple = useAuthStore((s) => s.signInApple);
   const signOutCloud = useAuthStore((s) => s.signOut);
   const createHousehold = useAuthStore((s) => s.createHousehold);
@@ -396,16 +397,25 @@ export default function ProfileScreen() {
   };
 
   const handleSyncNow = async () => {
-    const result = await syncNow();
-    if (!result.ok) {
-      Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
-      return;
+    try {
+      const result = await syncNow();
+      if (!result.ok) {
+        Alert.alert(t('profile.syncFailed'), result.error ?? t('profile.syncFailed'));
+        return;
+      }
+      await initialize();
+      const pushed = result.pushed ?? 0;
+      const pulled = result.pulled ?? 0;
+      Alert.alert(
+        t('profile.syncDone'),
+        pushed === 0 && pulled === 0
+          ? t('profile.syncUpToDate')
+          : t('profile.syncCounts', { pushed, pulled })
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t('profile.syncFailed');
+      Alert.alert(t('profile.syncFailed'), message);
     }
-    await initialize();
-    Alert.alert(
-      t('profile.syncDone'),
-      `↑ ${result.pushed ?? 0} · ↓ ${result.pulled ?? 0}`
-    );
   };
 
   const handleCreateHousehold = async () => {
@@ -871,6 +881,11 @@ export default function ProfileScreen() {
                       disabled={isSyncing}
                       style={{ marginBottom: spacing.sm }}
                     />
+                    {lastSyncError ? (
+                      <Text style={[styles.importHint, { color: colors.danger, marginBottom: spacing.sm }]}>
+                        {lastSyncError}
+                      </Text>
+                    ) : null}
                   </>
                 ) : (
                   <>

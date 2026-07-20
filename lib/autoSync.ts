@@ -1,11 +1,12 @@
 /**
- * Local-first cloud sync: after SQLite writes, debounce a background
- * push/pull when the user is in a household. Offline writes stay local;
- * sync retries on the next change or manual Sync now.
+ * Local-first cloud sync: after every SQLite write that matters for the
+ * household, push/pull immediately so the cloud (and partner phones) stay current.
+ * Offline writes stay local; sync retries on the next change or manual Sync now.
  */
 import { useAuthStore } from '@/store/useAuthStore';
 
-const DEBOUNCE_MS = 2500;
+/** Tiny coalesce so double-taps in the same frame share one sync. */
+const COALESCE_MS = 100;
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let inFlight = false;
@@ -20,7 +21,7 @@ export function scheduleHouseholdAutoSync(): void {
   timer = setTimeout(() => {
     timer = null;
     void flushHouseholdAutoSync();
-  }, DEBOUNCE_MS);
+  }, COALESCE_MS);
 }
 
 async function flushHouseholdAutoSync(): Promise<void> {
@@ -41,7 +42,7 @@ async function flushHouseholdAutoSync(): Promise<void> {
     timer = setTimeout(() => {
       timer = null;
       void flushHouseholdAutoSync();
-    }, DEBOUNCE_MS);
+    }, COALESCE_MS);
     return;
   }
 

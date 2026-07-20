@@ -204,6 +204,17 @@ export const syncState = sqliteTable('sync_state', {
   lastSyncedAt: text('last_synced_at'),
 });
 
+/**
+ * Offline-safe tombstones: local deletes enqueue here, then soft-delete on Supabase
+ * during the next sync so the partner device can remove the same rows.
+ */
+export const pendingSyncDeletes = sqliteTable('pending_sync_deletes', {
+  id: text('id').primaryKey().notNull(), // `${table}:${rowId}`
+  tableName: text('table_name').notNull(),
+  rowId: text('row_id').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
 export type BabyRow = typeof babies.$inferSelect;
 export type AppSettingsRow = typeof appSettings.$inferSelect;
 export type SleepEventRow = typeof sleepEvents.$inferSelect;
