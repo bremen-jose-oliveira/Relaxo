@@ -1,6 +1,11 @@
 import Papa from 'papaparse';
 import type { BathEvent, DiaperEvent, FeedingEvent, SleepEvent, WakeEvent } from '@/types';
-import { isArtificial24hNightSleep, isInstantSleepMarker } from '@/lib/sleepTotals';
+import {
+  needsNapperBedtimeStitch,
+} from '@/lib/sleepTotals';
+
+/** Morning wake must fall within this window after bedtime to stitch. */
+export const NAPPER_STITCH_MAX_MS = 20 * 60 * 60 * 1000;
 
 export type ColumnMapping = {
   startTime: string;
@@ -334,14 +339,6 @@ export function classifyRow(raw: string): RowClassification {
   if (/^sleep$/i.test(value)) return { category: 'sleep', sleepType: 'nap' };
 
   return { category: 'unrecognized' };
-}
-
-/** @deprecated use classifyRow */
-export function classifyEventType(raw: string): 'nap' | 'night' | 'not_sleep' | null {
-  const c = classifyRow(raw);
-  if (c.category === 'sleep') return c.sleepType;
-  if (c.category === 'unrecognized') return null;
-  return 'not_sleep' as never;
 }
 
 function parseDateTime(value: string, datePart?: string): Date | null {
@@ -699,17 +696,6 @@ export function mapImportRow(
   };
 }
 
-/** @deprecated use mapImportRow */
-export function mapRowToSleepEvent(
-  row: Record<string, string>,
-  rowIndex: number,
-  mapping: ColumnMapping,
-  babyId: string,
-  now?: Date
-): MappedImportRow {
-  return mapImportRow(row, rowIndex, mapping, babyId, now);
-}
-
 function summarizePreview(rows: MappedImportRow[]): Omit<
   ImportPreview,
   'totalRows' | 'mapping' | 'mappingSource' | 'rows' | 'timezoneNote'
@@ -736,7 +722,8 @@ export function buildImportPreview(
   now: Date = new Date(),
   babyProfile: ImportedBabyProfile = { name: null, birthDate: null }
 ): ImportPreview {
-  const rows = parsed.rows.map((row, i) => mapImportRow(row, i + 1, mapping, babyId, now));
+  const mapped = parsed.rows.map((row, i) => mapImportRow(row, i + 1, mapping, babyId, now));
+  const rows = applyNapperBedtimeStitchToRows(mapped);
   const summary = summarizePreview(rows);
 
   return {
@@ -851,21 +838,76 @@ export function stitchNapperBedtimes(
   const morningWakeTimes = wakes
     .filter((w) => w.wakeType === 'morning')
     .map((w) => new Date(w.time).getTime())
+    .filter((t) => Number.isFinite(t))
     .sort((a, b) => a - b);
 
   return sleep.map((event) => {
-    if (event.type !== 'night' || !event.endTime) return event;
+    if (!needsNapperBedtimeStitch(event)) return event;
 
     const startMs = new Date(event.startTime).getTime();
-    const isInstant = isInstantSleepMarker(event);
-    const isArtificial24h = isArtificial24hNightSleep(event);
+    if (!Number.isFinite(startMs)) return event;
 
-    if (!isInstant && !isArtificial24h) return event;
-
-    const nextMorning = morningWakeTimes.find((t) => t > startMs);
+    const nextMorning = morningWakeTimes.find(
+      (t) => t > startMs && t - startMs <= NAPPER_STITCH_MAX_MS
+    );
     if (!nextMorning) return event;
 
     return { ...event, endTime: new Date(nextMorning).toISOString() };
+  });
+}
+
+/**
+ * Rewrite preview sleep rows after stitching Napper bedtime placeholders to
+ * morning wakes. Unresolved placeholders are skipped so they never land in DB.
+ */
+export function applyNapperBedtimeStitchToRows(rows: MappedImportRow[]): MappedImportRow[] {
+  const sleepRows = rows.filter(
+    (r) =>
+      r.sleepEvent &&
+      r.eventKind === 'sleep' &&
+      (r.outcome === 'ready' || r.outcome === 'ongoing')
+  );
+  const wakeEvents = rows
+    .filter((r) => r.wakeEvent && r.outcome === 'ready')
+    .map((r) => r.wakeEvent!);
+
+  const stitched = stitchNapperBedtimes(
+    sleepRows.map((r) => r.sleepEvent!),
+    wakeEvents
+  );
+  const byRowIndex = new Map(
+    sleepRows.map((row, i) => [row.rowIndex, stitched[i]!] as const)
+  );
+
+  return rows.map((row) => {
+    const nextSleep = byRowIndex.get(row.rowIndex);
+    if (!nextSleep) return row;
+
+    if (needsNapperBedtimeStitch(nextSleep)) {
+      return {
+        ...row,
+        outcome: 'skipped_parse_error',
+        eventKind: undefined,
+        sleepEvent: undefined,
+        sleepPauses: undefined,
+        preview: undefined,
+        reason:
+          'Night sleep looks like a Napper placeholder (instant or ~24h) and no morning wake was found within 20h to set a real end time',
+      };
+    }
+
+    if (nextSleep.endTime === row.sleepEvent?.endTime) return row;
+
+    return {
+      ...row,
+      sleepEvent: nextSleep,
+      preview: row.preview
+        ? {
+            ...row.preview,
+            end: formatPreviewTime(nextSleep.endTime),
+          }
+        : row.preview,
+    };
   });
 }
 
@@ -907,13 +949,20 @@ export function getImportableEvents(preview: ImportPreview): {
     if (row.wakeEvent) wakes.push(row.wakeEvent);
   }
 
+  // Preview already stitches; stitch again as a safety net for older previews /
+  // callers that skip buildImportPreview, then drop any leftover placeholders.
+  const stitched = stitchNapperBedtimes(sleep, wakes).filter(
+    (event) => !needsNapperBedtimeStitch(event)
+  );
+  const keptStarts = new Set(stitched.map((e) => e.startTime));
+
   return {
-    sleep: stitchNapperBedtimes(sleep, wakes),
+    sleep: stitched,
     feedings,
     diapers,
     baths,
     wakes,
-    sleepPauses,
+    sleepPauses: sleepPauses.filter((p) => keptStarts.has(p.sleepStartTime)),
   };
 }
 

@@ -14,7 +14,13 @@ import type {
   FeedingEvent,
   NapExtension,
   SleepEvent,
+  SleepOnsetMethod,
   SleepPause,
+  SleepPlace,
+  SleepSettleAid,
+  SleepSettleQuality,
+  SleepWakeManner,
+  SleepWakeMood,
   WakeEvent,
 } from "@/types";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
@@ -70,6 +76,13 @@ function toSleepEvent(row: typeof sleepEvents.$inferSelect): SleepEvent {
     startTime: row.startTime,
     endTime: row.endTime ?? null,
     extension: (row.extension as NapExtension | null) ?? null,
+    onsetMethod: (row.onsetMethod as SleepOnsetMethod | null) ?? null,
+    settleMinutes: row.settleMinutes ?? null,
+    settleQuality: (row.settleQuality as SleepSettleQuality | null) ?? null,
+    settleAid: (row.settleAid as SleepSettleAid | null) ?? null,
+    sleepPlace: (row.sleepPlace as SleepPlace | null) ?? null,
+    wakeManner: (row.wakeManner as SleepWakeManner | null) ?? null,
+    wakeMood: (row.wakeMood as SleepWakeMood | null) ?? null,
   };
 }
 
@@ -290,6 +303,13 @@ export async function insertSleepEvent(event: SleepEvent): Promise<void> {
     startTime: event.startTime,
     endTime: event.endTime,
     extension: event.extension ?? null,
+    onsetMethod: event.onsetMethod ?? null,
+    settleMinutes: event.settleMinutes ?? null,
+    settleQuality: event.settleQuality ?? null,
+    settleAid: event.settleAid ?? null,
+    sleepPlace: event.sleepPlace ?? null,
+    wakeManner: event.wakeManner ?? null,
+    wakeMood: event.wakeMood ?? null,
   });
 }
 
@@ -302,6 +322,13 @@ export async function updateSleepEvent(event: SleepEvent): Promise<void> {
       startTime: event.startTime,
       endTime: event.endTime,
       extension: event.extension ?? null,
+      onsetMethod: event.onsetMethod ?? null,
+      settleMinutes: event.settleMinutes ?? null,
+      settleQuality: event.settleQuality ?? null,
+      settleAid: event.settleAid ?? null,
+      sleepPlace: event.sleepPlace ?? null,
+      wakeManner: event.wakeManner ?? null,
+      wakeMood: event.wakeMood ?? null,
     })
     .where(eq(sleepEvents.id, event.id));
 }
@@ -354,6 +381,13 @@ export async function bulkInsertSleepEvents(
       id,
       ...event,
       extension: event.extension ?? null,
+      onsetMethod: event.onsetMethod ?? null,
+      settleMinutes: event.settleMinutes ?? null,
+      settleQuality: event.settleQuality ?? null,
+      settleAid: event.settleAid ?? null,
+      sleepPlace: event.sleepPlace ?? null,
+      wakeManner: event.wakeManner ?? null,
+      wakeMood: event.wakeMood ?? null,
     };
     await db.insert(sleepEvents).values({
       id: row.id,
@@ -362,6 +396,13 @@ export async function bulkInsertSleepEvents(
       startTime: row.startTime,
       endTime: row.endTime,
       extension: row.extension ?? null,
+      onsetMethod: row.onsetMethod ?? null,
+      settleMinutes: row.settleMinutes ?? null,
+      settleQuality: row.settleQuality ?? null,
+      settleAid: row.settleAid ?? null,
+      sleepPlace: row.sleepPlace ?? null,
+      wakeManner: row.wakeManner ?? null,
+      wakeMood: row.wakeMood ?? null,
     });
     existing.push(row);
     inserted.push(row);
@@ -984,6 +1025,36 @@ export async function insertDayContextTag(
 export async function deleteDayContextTag(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(dayContextTags).where(eq(dayContextTags.id, id));
+}
+
+/** Remap a local day-tag primary key to match a cloud canonical id. */
+export async function replaceDayContextTagId(
+  oldId: string,
+  newId: string,
+): Promise<void> {
+  if (!oldId || !newId || oldId === newId) return;
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(dayContextTags)
+    .where(eq(dayContextTags.id, oldId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return;
+
+  const existing = await db
+    .select({ id: dayContextTags.id })
+    .from(dayContextTags)
+    .where(eq(dayContextTags.id, newId))
+    .limit(1);
+  await db.delete(dayContextTags).where(eq(dayContextTags.id, oldId));
+  if (existing[0]) return;
+  await db.insert(dayContextTags).values({
+    id: newId,
+    babyId: row.babyId,
+    dateKey: row.dateKey,
+    tag: row.tag,
+  });
 }
 
 export async function toggleDayContextTag(

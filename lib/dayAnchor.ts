@@ -69,15 +69,6 @@ export function getDayStartForHistoricalDay(
   return getEffectiveWakeAnchor(events, wakes, day);
 }
 
-/** @deprecated wake-day anchors removed; always false. */
-export function isWakeDayAnchored(
-  _events: SleepEvent[],
-  _wakes: WakeEvent[],
-  _anchorDate: Date
-): boolean {
-  return false;
-}
-
 export function getDayViewBounds(
   _events: SleepEvent[],
   _wakes: WakeEvent[],
@@ -125,14 +116,6 @@ export function formatCalendarDayLabel(day: Date): string {
     month: 'short',
     day: 'numeric',
   });
-}
-
-/** @deprecated use formatCalendarDayLabel */
-export function formatWakeDayRange(start: Date, end: Date): string {
-  if (isSameDay(start, end)) {
-    return formatCalendarDayLabel(start);
-  }
-  return formatCalendarDayLabel(start);
 }
 
 /** Completed naps on today's calendar day. */

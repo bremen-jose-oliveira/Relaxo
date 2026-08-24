@@ -2,10 +2,11 @@
 /**
  * Apply pending Supabase SQL migrations (numbered supabase/NNNN_*.sql).
  *
- *   npm run db:supabase:status       # check live API schema (no DB password)
- *   npm run db:supabase              # apply pending via Postgres (needs password)
- *   npm run db:supabase -- --fresh   # NEW project: schema.sql + stamp migrations
+ *   node scripts/supabase-status.mjs          # check live API schema (no DB password)
+ *   node scripts/supabase-migrate.mjs         # apply pending via Postgres
+ *   node scripts/supabase-migrate.mjs --fresh # NEW project: full schema.sql
  *
+ * (npm run db:supabase* wrappers work the same if npm is available.)
  * Prefer SQL Editor if you don’t have SUPABASE_DB_PASSWORD.
  */
 import { join } from 'node:path';
@@ -23,7 +24,9 @@ const args = new Set(process.argv.slice(2));
 const wantFresh = args.has('--fresh');
 
 if (args.has('--status')) {
-  console.error('Use: npm run db:supabase:status  (checks via API, no DB password)');
+  console.error(
+    'Use: node scripts/supabase-status.mjs  (checks via API, no DB password)'
+  );
   process.exit(1);
 }
 

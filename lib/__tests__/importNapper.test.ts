@@ -212,5 +212,53 @@ Luca,2025-03-01,2025-06-01,Nap,09:15,10:30,
       expect(nightMinutes).toBeGreaterThan(600);
       expect(nightMinutes).toBeLessThan(800);
     });
+
+    it('stitches Napper exact-24h night placeholders to morning wake', () => {
+      const night = {
+        babyId: BABY_ID,
+        type: 'night' as const,
+        startTime: '2026-05-19T18:28:01.000Z',
+        endTime: '2026-05-20T18:28:01.000Z',
+      };
+      const wake = {
+        babyId: BABY_ID,
+        time: '2026-05-20T06:25:50.000Z',
+        endTime: '2026-05-20T06:25:50.000Z',
+        wakeType: 'morning' as const,
+        notes: null,
+      };
+      const stitched = stitchNapperBedtimes([night], [wake]);
+      expect(stitched[0].endTime).toBe(wake.time);
+      expect(
+        Math.round(
+          (new Date(stitched[0].endTime!).getTime() -
+            new Date(stitched[0].startTime).getTime()) /
+            60000
+        )
+      ).toBe(718);
+    });
+
+    it('skips unstitched 24h placeholders instead of importing them', () => {
+      const csv = `start,end,category
+2026-05-19T18:28:01.000Z,2026-05-20T18:28:01.000Z,BED_TIME
+`;
+      const result = prepareImportFromCsv(csv, BABY_ID, undefined, NOW);
+      expect(result.preview!.sleepReadyCount).toBe(0);
+      expect(result.preview!.skippedFailed).toBe(1);
+      expect(getImportableEvents(result.preview!).sleep).toHaveLength(0);
+    });
+
+    it('imports stitched 24h nights via full CSV preview', () => {
+      const csv = `start,end,category
+2026-05-19T18:28:01.000Z,2026-05-20T18:28:01.000Z,BED_TIME
+2026-05-20T06:25:50.000Z,2026-05-20T06:25:50.000Z,WOKE_UP
+`;
+      const result = prepareImportFromCsv(csv, BABY_ID, undefined, NOW);
+      expect(result.preview!.sleepReadyCount).toBe(1);
+      expect(result.preview!.wakeReadyCount).toBe(1);
+      const { sleep } = getImportableEvents(result.preview!);
+      expect(sleep).toHaveLength(1);
+      expect(sleep[0].endTime).toBe('2026-05-20T06:25:50.000Z');
+    });
   });
 });

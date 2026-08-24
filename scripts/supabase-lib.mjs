@@ -26,6 +26,13 @@ export function loadDotEnv() {
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
+    } else {
+      // Unquoted inline comments: KEY=value # comment
+      // Also strips a trailing lone "#" that people leave after paste.
+      const hash = value.indexOf('#');
+      if (hash >= 0) {
+        value = value.slice(0, hash).trimEnd();
+      }
     }
     if (process.env[key] === undefined) process.env[key] = value;
   }
@@ -59,6 +66,26 @@ export function projectRefFromApiUrl(apiUrl) {
 export function getDatabaseUrl() {
   loadDotEnv();
 
+  const apiUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const password = process.env.SUPABASE_DB_PASSWORD;
+  const region = process.env.SUPABASE_DB_REGION?.trim();
+  const poolerHost =
+    process.env.SUPABASE_POOLER_HOST?.trim() ||
+    (region ? `aws-0-${region}.pooler.supabase.com` : null);
+
+  // Prefer plain password + region — encodeURIComponent handles @ ! # safely.
+  if (apiUrl && password && poolerHost) {
+    const ref = projectRefFromApiUrl(apiUrl);
+    if (!ref) {
+      throw new Error(
+        `Could not read project ref from EXPO_PUBLIC_SUPABASE_URL (${apiUrl}).`
+      );
+    }
+    const enc = encodeURIComponent(password);
+    // Session mode pooler: user is postgres.<ref>, port 5432 (not 6543 transaction).
+    return `postgresql://postgres.${ref}:${enc}@${poolerHost}:5432/postgres`;
+  }
+
   const explicit =
     process.env.SUPABASE_DB_URL ||
     process.env.DATABASE_URL ||
@@ -76,38 +103,39 @@ export function getDatabaseUrl() {
         'SUPABASE_DB_URL must start with postgresql:// (got something else).'
       );
     }
+    if (/@db\.[^.]+\.supabase\.co/i.test(explicit)) {
+      throw new Error(
+        'SUPABASE_DB_URL uses the direct db.<ref>.supabase.co host.\n' +
+          'That host is often IPv6-only and fails from many Macs.\n\n' +
+          'Use Session pooler instead:\n' +
+          '  SUPABASE_DB_PASSWORD=<database password>   # plain text, no encoding\n' +
+          '  SUPABASE_DB_REGION=eu-central-1\n' +
+          '  # delete SUPABASE_DB_URL\n\n' +
+          'Or paste the Session URI (user postgres.<ref>@aws-0-….pooler.supabase.com).'
+      );
+    }
+    // Password special chars (@ ! # etc.) must be percent-encoded or the URI
+    // splits wrong and auth fails with "password authentication failed".
+    const atCount = (explicit.match(/@/g) || []).length;
+    if (atCount > 1) {
+      throw new Error(
+        'SUPABASE_DB_URL looks like the password contains an unencoded "@".\n' +
+          'Prefer SUPABASE_DB_PASSWORD (plain) + SUPABASE_DB_REGION instead of hand-encoding.'
+      );
+    }
     return explicit;
   }
 
-  const apiUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const password = process.env.SUPABASE_DB_PASSWORD;
-  const region = process.env.SUPABASE_DB_REGION?.trim();
-  const poolerHost =
-    process.env.SUPABASE_POOLER_HOST?.trim() ||
-    (region ? `aws-0-${region}.pooler.supabase.com` : null);
-
-  if (apiUrl && password && poolerHost) {
-    const ref = projectRefFromApiUrl(apiUrl);
-    if (!ref) {
-      throw new Error(
-        `Could not read project ref from EXPO_PUBLIC_SUPABASE_URL (${apiUrl}).`
-      );
-    }
-    const enc = encodeURIComponent(password);
-    // Session mode pooler: user is postgres.<ref>, port 5432 (not 6543 transaction).
-    return `postgresql://postgres.${ref}:${enc}@${poolerHost}:5432/postgres`;
-  }
-
   throw new Error(
-    'Missing Postgres credentials for npm run db:supabase.\n\n' +
-      'Option A — paste Session URI (easiest):\n' +
-      '  Supabase → Database → Connect → Session mode → URI\n' +
+    'Missing Postgres credentials for node scripts/supabase-migrate.mjs.\n\n' +
+      'Recommended:\n' +
+      '  SUPABASE_DB_PASSWORD=<database password>   # plain text\n' +
+      '  SUPABASE_DB_REGION=eu-central-1\n\n' +
+      'Or Session URI:\n' +
       '  SUPABASE_DB_URL=postgresql://postgres.<ref>:…@aws-0-….pooler.supabase.com:5432/postgres\n\n' +
-      'Option B — build from password + region:\n' +
-      '  SUPABASE_DB_PASSWORD=<database password>\n' +
-      '  SUPABASE_DB_REGION=eu-central-1   # from Connect host: aws-0-<region>.pooler…\n' +
-      '  (keeps EXPO_PUBLIC_SUPABASE_URL as-is)\n\n' +
-      'Schema check without DB login: npm run db:supabase:status'
+      'For preview-build publish only (no DB password):\n' +
+      '  SUPABASE_SERVICE_ROLE_KEY=<service_role secret from API settings>\n\n' +
+      'Schema check without DB login: node scripts/supabase-status.mjs'
   );
 }
 
@@ -177,7 +205,7 @@ function enrichDbError(err) {
       `${msg}\n\n` +
         'That Postgres host is unreachable from your Mac (common with db.<ref>.supabase.co).\n' +
         'Fix: Supabase → Database → Connect → Session mode → copy URI into SUPABASE_DB_URL.\n' +
-        'Or skip CLI migrations — use SQL Editor + npm run db:supabase:status.'
+        'Or skip CLI migrations — use SQL Editor + node scripts/supabase-status.mjs.'
     );
   }
   return err instanceof Error ? err : new Error(msg);

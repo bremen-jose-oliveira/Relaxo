@@ -1,51 +1,55 @@
+/**
+ * Relaxo palette — aligned with the app icon (night sky, moon blue, soft lavender).
+ * Care-event colors stay distinct for charts/logs.
+ */
 export const Colors = {
   light: {
-    text: '#1A1A2E',
-    textSecondary: '#6B7280',
-    background: '#F8F6F3',
+    text: '#122048',
+    textSecondary: '#6B7190',
+    background: '#F4F2F8',
     card: '#FFFFFF',
-    tint: '#7C9A92',
-    tintDark: '#5A7A72',
-    border: '#E8E4DF',
-    asleep: '#9BB5CE',
-    awake: '#E8C4A0',
-    feeding: '#C9A0DC',
-    diaper: '#F0C674',
-    bath: '#6BB5C9',
-    wake: '#7CB7D4',
-    success: '#7C9A92',
+    tint: '#6B7FBF',
+    tintDark: '#3D4B8E',
+    border: '#E2DFEC',
+    asleep: '#9BB0D9',
+    awake: '#E0B8A8',
+    feeding: '#B8A0D4',
+    diaper: '#E8C88A',
+    bath: '#7BB8D0',
+    wake: '#7CA8D8',
+    success: '#6B7FBF',
     danger: '#D4847C',
     confidence: {
       low: '#D4847C',
-      medium: '#E8C4A0',
-      high: '#7C9A92',
+      medium: '#E0B8A8',
+      high: '#6B7FBF',
     },
     tabIconDefault: '#9CA3AF',
-    tabIconSelected: '#7C9A92',
+    tabIconSelected: '#6B7FBF',
   },
   dark: {
-    text: '#F5F0EB',
-    textSecondary: '#A8A29E',
-    background: '#1A1A2E',
-    card: '#252540',
-    tint: '#9BB5A8',
-    tintDark: '#7C9A92',
-    border: '#3D3D5C',
-    asleep: '#6B8BA8',
-    awake: '#C4A882',
-    feeding: '#9B7BB8',
+    text: '#EDEAF5',
+    textSecondary: '#A3A5CE',
+    background: '#0A122E',
+    card: '#162240',
+    tint: '#A3A5CE',
+    tintDark: '#7786C1',
+    border: '#2A3658',
+    asleep: '#7786C1',
+    awake: '#DBB6AF',
+    feeding: '#B8A0D4',
     diaper: '#C4A060',
     bath: '#5A9AAD',
-    wake: '#5E93AF',
-    success: '#9BB5A8',
+    wake: '#7CA8D8',
+    success: '#A3A5CE',
     danger: '#D4847C',
     confidence: {
       low: '#D4847C',
-      medium: '#C4A882',
-      high: '#9BB5A8',
+      medium: '#DBB6AF',
+      high: '#A3A5CE',
     },
     tabIconDefault: '#6B7280',
-    tabIconSelected: '#9BB5A8',
+    tabIconSelected: '#A3A5CE',
   },
 };
 
@@ -62,23 +66,3 @@ export const touchTarget = {
   minHeight: 56,
   buttonHeight: 72,
 };
-
-// Default export for legacy template components
-const DefaultColors = {
-  light: {
-    text: Colors.light.text,
-    background: Colors.light.background,
-    tint: Colors.light.tint,
-    tabIconDefault: Colors.light.tabIconDefault,
-    tabIconSelected: Colors.light.tabIconSelected,
-  },
-  dark: {
-    text: Colors.dark.text,
-    background: Colors.dark.background,
-    tint: Colors.dark.tint,
-    tabIconDefault: Colors.dark.tabIconDefault,
-    tabIconSelected: Colors.dark.tabIconSelected,
-  },
-};
-
-export default DefaultColors;

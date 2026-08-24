@@ -1,5 +1,5 @@
 import { newId } from '@/lib/newId';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { getDb, schema } from '@/db/client';
 import { getSyncState, setSyncState, clearSyncState } from '@/db/syncState';
 import {
@@ -24,11 +24,23 @@ import {
   getSleepEventsForBaby,
   getSleepPausesForBaby,
   getWakeEventsForBaby,
+  replaceDayContextTagId,
   upsertBaby,
   upsertDailyChoreCompletion,
 } from '@/db/database';
 import { getCurrentUser } from '@/lib/auth';
+import {
+  dayContextUniqKey,
+  pickCanonicalDayContextRemoteIds,
+  type DayContextRemoteRow,
+} from '@/lib/dayContextSync';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
+import {
+  filterChangedPushRows as filterChangedRowsAgainstSnapshots,
+  payloadsEqual,
+  pullAllPages,
+  shouldKeepLocalOverRemote,
+} from '@/lib/syncDiff';
 import type {
   Baby,
   BathEvent,
@@ -113,14 +125,22 @@ export async function resolveExistingHousehold(): Promise<
   const local = await getSyncState();
   if (local.householdId && local.inviteCode) {
     const member = await verifyHouseholdMembership(local.householdId);
-    if (member) {
+    if (member === 'member') {
       return {
         householdId: local.householdId,
         inviteCode: local.inviteCode,
         name: local.householdName,
       };
     }
-    // Stale local household (e.g. join never completed) — clear and re-resolve from server.
+    if (member === 'error') {
+      // Transient network/RLS glitch — keep local household; don't wipe join state.
+      return {
+        householdId: local.householdId,
+        inviteCode: local.inviteCode,
+        name: local.householdName,
+      };
+    }
+    // Confirmed not a member — clear and re-resolve from server.
     await setSyncState({
       householdId: null,
       inviteCode: null,
@@ -162,10 +182,12 @@ export async function resolveExistingHousehold(): Promise<
   return null;
 }
 
-async function verifyHouseholdMembership(householdId: string): Promise<boolean> {
+async function verifyHouseholdMembership(
+  householdId: string
+): Promise<'member' | 'not_member' | 'error'> {
   const supabase = getSupabase();
   const user = await getCurrentUser();
-  if (!supabase || !user) return false;
+  if (!supabase || !user) return 'error';
 
   const { data, error } = await supabase
     .from('household_members')
@@ -174,8 +196,8 @@ async function verifyHouseholdMembership(householdId: string): Promise<boolean> 
     .eq('user_id', user.id)
     .limit(1);
 
-  if (error) return false;
-  return (data?.length ?? 0) > 0;
+  if (error) return 'error';
+  return (data?.length ?? 0) > 0 ? 'member' : 'not_member';
 }
 
 /**
@@ -319,15 +341,23 @@ async function pullTable(
   householdId: string
 ): Promise<{ rows: Record<string, unknown>[]; error?: string }> {
   const supabase = getSupabase()!;
-  const { data, error } = await supabase
-    .from(table)
-    .select('*')
-    .eq('household_id', householdId)
-    .is('deleted_at', null);
-  if (error) {
-    return { rows: [], error: formatRemoteError(table, error.message) };
+  const result = await pullAllPages(async (from, to) => {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('household_id', householdId)
+      .is('deleted_at', null)
+      .order('id', { ascending: true })
+      .range(from, to);
+    if (error) {
+      return { rows: [], errorMessage: formatRemoteError(table, error.message) };
+    }
+    return { rows: (data ?? []) as Record<string, unknown>[] };
+  });
+  if (result.errorMessage) {
+    return { rows: [], error: result.errorMessage };
   }
-  return { rows: (data ?? []) as Record<string, unknown>[] };
+  return { rows: result.rows };
 }
 
 async function pullTableOptional(
@@ -404,6 +434,36 @@ function sleepLocalPayload(
     start_time: String(local.startTime),
     end_time: local.endTime ? String(local.endTime) : null,
     extension: local.extension ?? null,
+    onset_method: local.onsetMethod ?? null,
+    settle_minutes: local.settleMinutes != null ? Number(local.settleMinutes) : null,
+    settle_quality: local.settleQuality ?? null,
+    settle_aid: local.settleAid ?? null,
+    sleep_place: local.sleepPlace ?? null,
+    wake_manner: local.wakeManner ?? null,
+    wake_mood: local.wakeMood ?? null,
+  };
+}
+
+/** Must include the same care fields we push, or every sync looks dirty. */
+function sleepRemotePayload(
+  row: Record<string, unknown>,
+  householdId: string
+): Record<string, unknown> {
+  return {
+    id: String(row.id),
+    household_id: householdId,
+    baby_id: String(row.baby_id),
+    type: row.type,
+    start_time: String(row.start_time),
+    end_time: row.end_time ? String(row.end_time) : null,
+    extension: row.extension ?? null,
+    onset_method: row.onset_method ?? null,
+    settle_minutes: row.settle_minutes != null ? Number(row.settle_minutes) : null,
+    settle_quality: row.settle_quality ?? null,
+    settle_aid: row.settle_aid ?? null,
+    sleep_place: row.sleep_place ?? null,
+    wake_manner: row.wake_manner ?? null,
+    wake_mood: row.wake_mood ?? null,
   };
 }
 
@@ -451,27 +511,6 @@ function snapKey(table: string, id: string): string {
   return `${table}:${id}`;
 }
 
-function stripSyncMeta(row: Record<string, unknown>): Record<string, unknown> {
-  const { updated_at, deleted_at, ...rest } = row;
-  return rest;
-}
-
-function payloadsEqual(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>
-): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const key of keys) {
-    const av = a[key] ?? null;
-    const bv = b[key] ?? null;
-    if (av === bv) continue;
-    if (av == null && bv == null) continue;
-    if (String(av) === String(bv)) continue;
-    return false;
-  }
-  return true;
-}
-
 function rememberRemoteRows(
   snapshots: Map<string, Record<string, unknown>>,
   table: string,
@@ -492,11 +531,69 @@ function filterChangedPushRows(
   rows: Record<string, unknown>[],
   snapshots: Map<string, Record<string, unknown>>
 ): Record<string, unknown>[] {
-  return rows.filter((row) => {
-    const remote = snapshots.get(snapKey(table, String(row.id)));
-    if (!remote) return true;
-    return !payloadsEqual(stripSyncMeta(row), remote);
+  return filterChangedRowsAgainstSnapshots(rows, snapshots, (row) =>
+    snapKey(table, String(row.id))
+  );
+}
+
+/** Avoid pushing a local day-tag that duplicates a remote one under a different id. */
+function filterDayContextTagPushRows(
+  rows: Record<string, unknown>[],
+  snapshots: Map<string, Record<string, unknown>>
+): Record<string, unknown>[] {
+  const remoteKeys = new Set<string>();
+  for (const [key, remote] of snapshots) {
+    if (!key.startsWith('day_context_tags:')) continue;
+    remoteKeys.add(
+      `${remote.baby_id}|${remote.date_key}|${remote.tag}`
+    );
+  }
+
+  return filterChangedPushRows('day_context_tags', rows, snapshots).filter((row) => {
+    const remote = snapshots.get(snapKey('day_context_tags', String(row.id)));
+    if (remote) return true; // same id — normal change filter already applied
+    const uniq = `${row.baby_id}|${row.date_key}|${row.tag}`;
+    // Cloud already has this tag under another id — don't create a duplicate.
+    return !remoteKeys.has(uniq);
   });
+}
+
+/**
+ * Soft-deleted cloud tags still occupy a non-partial unique key on older schemas.
+ * Remap local ids to the cloud canonical id so push revives that row instead of inserting.
+ */
+async function reconcileLocalDayContextTagIds(
+  householdId: string
+): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  const result = await pullAllPages(async (from, to) => {
+    const { data, error } = await supabase
+      .from('day_context_tags')
+      .select('id,baby_id,date_key,tag,deleted_at')
+      .eq('household_id', householdId)
+      .order('id', { ascending: true })
+      .range(from, to);
+    if (error) {
+      return { rows: [], errorMessage: error.message };
+    }
+    return { rows: (data ?? []) as DayContextRemoteRow[] };
+  });
+  if (result.errorMessage || result.rows.length === 0) return;
+
+  const canonical = pickCanonicalDayContextRemoteIds(result.rows);
+  const babies = await getAllBabies();
+  for (const baby of babies) {
+    const local = await getDayContextTagsForBaby(baby.id);
+    for (const tag of local) {
+      const remoteId = canonical.get(
+        dayContextUniqKey(tag.babyId, tag.dateKey, tag.tag)
+      );
+      if (!remoteId || remoteId === tag.id) continue;
+      await replaceDayContextTagId(tag.id, remoteId);
+    }
+  }
 }
 
 async function localRowExists(table: SyncTable, id: string): Promise<boolean> {
@@ -780,19 +877,26 @@ async function reconcileDeletedRemote(
   householdId: string
 ): Promise<number> {
   const supabase = getSupabase()!;
-  const { data, error } = await supabase
-    .from(table)
-    .select('id')
-    .eq('household_id', householdId)
-    .not('deleted_at', 'is', null);
-  if (error) {
-    if (isMissingRemoteTableError(formatRemoteError(table, error.message))) return 0;
+  const result = await pullAllPages(async (from, to) => {
+    const { data, error } = await supabase
+      .from(table)
+      .select('id')
+      .eq('household_id', householdId)
+      .not('deleted_at', 'is', null)
+      .order('id', { ascending: true })
+      .range(from, to);
+    if (error) {
+      return { rows: [], errorMessage: formatRemoteError(table, error.message) };
+    }
+    return { rows: (data ?? []) as Record<string, unknown>[] };
+  });
+  if (result.errorMessage) {
+    if (isMissingRemoteTableError(result.errorMessage)) return 0;
     return 0;
   }
-  if (!data) return 0;
 
   let removed = 0;
-  for (const row of data) {
+  for (const row of result.rows) {
     const id = String(row.id);
     if (!(await localRowExists(table, id))) continue;
     await hardDeleteLocal(table, id);
@@ -874,26 +978,60 @@ function sleepMatches(
   event: SleepEvent
 ): boolean {
   if (!local) return false;
+  const localSettle =
+    local.settleMinutes != null && local.settleMinutes !== ''
+      ? Number(local.settleMinutes)
+      : null;
+  const eventSettle = event.settleMinutes != null ? Number(event.settleMinutes) : null;
   return (
     local.babyId === event.babyId &&
     local.type === event.type &&
     local.startTime === event.startTime &&
     (local.endTime ?? null) === (event.endTime ?? null) &&
-    (local.extension ?? null) === (event.extension ?? null)
+    (local.extension ?? null) === (event.extension ?? null) &&
+    (local.onsetMethod ?? null) === (event.onsetMethod ?? null) &&
+    localSettle === eventSettle &&
+    (local.settleQuality ?? null) === (event.settleQuality ?? null) &&
+    (local.settleAid ?? null) === (event.settleAid ?? null) &&
+    (local.sleepPlace ?? null) === (event.sleepPlace ?? null) &&
+    (local.wakeManner ?? null) === (event.wakeManner ?? null) &&
+    (local.wakeMood ?? null) === (event.wakeMood ?? null)
   );
+}
+
+function remoteUpdatedSinceLastSync(
+  remoteUpdatedAt: unknown,
+  lastSyncedAt: string | null
+): boolean {
+  if (!lastSyncedAt) return false;
+  const remoteMs = remoteUpdatedAt ? Date.parse(String(remoteUpdatedAt)) : NaN;
+  const syncedMs = Date.parse(lastSyncedAt);
+  return Number.isFinite(remoteMs) && Number.isFinite(syncedMs) && remoteMs > syncedMs;
+}
+
+/** Compact fingerprint of sleep endTimes — detects open/closed changes across sync. */
+async function sleepEndFingerprint(babyIds: Iterable<string>): Promise<string> {
+  const parts: string[] = [];
+  for (const babyId of babyIds) {
+    const events = await getSleepEventsForBaby(babyId);
+    for (const event of events) {
+      parts.push(`${event.id}=${event.endTime ?? 'open'}`);
+    }
+  }
+  return parts.sort().join('|');
 }
 
 async function applyRemoteSleep(
   rows: Record<string, unknown>[],
   householdId: string,
-  snapshots: Map<string, Record<string, unknown>>
+  snapshots: Map<string, Record<string, unknown>>,
+  lastSyncedAt: string | null
 ): Promise<number> {
   let n = 0;
   for (const row of rows) {
     const id = String(row.id);
     const local = await getLocalRow(sleepEvents, id);
     const remoteEnd = row.end_time ? String(row.end_time) : null;
-    const localEnd = local?.endTime ? String(local.endTime) : null;
 
     if (local && snapshots.has(snapKey('sleep_events', id))) {
       const dirty = hasUnpushedLocalChanges(
@@ -902,7 +1040,18 @@ async function applyRemoteSleep(
         sleepLocalPayload(local, householdId),
         snapshots
       );
-      if (dirty && !(remoteEnd && !localEnd)) continue;
+      if (
+        shouldKeepLocalOverRemote({
+          hasLocal: true,
+          localDiffersFromRemote: dirty,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          lastSyncedAt,
+          // Do not forceRemote when local cleared endTime ("still asleep") —
+          // that unpushed reopen must win until we push, or sync reverts it.
+        })
+      ) {
+        continue;
+      }
     }
 
     const event: SleepEvent = {
@@ -912,8 +1061,20 @@ async function applyRemoteSleep(
       startTime: String(row.start_time),
       endTime: remoteEnd,
       extension: (row.extension as NapExtension | null) ?? null,
+      onsetMethod: (row.onset_method as SleepEvent['onsetMethod']) ?? null,
+      settleMinutes:
+        row.settle_minutes != null ? Number(row.settle_minutes) : null,
+      settleQuality: (row.settle_quality as SleepEvent['settleQuality']) ?? null,
+      settleAid: (row.settle_aid as SleepEvent['settleAid']) ?? null,
+      sleepPlace: (row.sleep_place as SleepEvent['sleepPlace']) ?? null,
+      wakeManner: (row.wake_manner as SleepEvent['wakeManner']) ?? null,
+      wakeMood: (row.wake_mood as SleepEvent['wakeMood']) ?? null,
     };
-    if (sleepMatches(local, event)) continue;
+    if (sleepMatches(local, event)) {
+      // Already local (e.g. realtime applied first) but still "received" this round.
+      if (remoteUpdatedSinceLastSync(row.updated_at, lastSyncedAt)) n += 1;
+      continue;
+    }
     await upsertById(sleepEvents, event.id, {
       id: event.id,
       babyId: event.babyId,
@@ -921,6 +1082,13 @@ async function applyRemoteSleep(
       startTime: event.startTime,
       endTime: event.endTime,
       extension: event.extension ?? null,
+      onsetMethod: event.onsetMethod ?? null,
+      settleMinutes: event.settleMinutes ?? null,
+      settleQuality: event.settleQuality ?? null,
+      settleAid: event.settleAid ?? null,
+      sleepPlace: event.sleepPlace ?? null,
+      wakeManner: event.wakeManner ?? null,
+      wakeMood: event.wakeMood ?? null,
     });
     n += 1;
   }
@@ -942,14 +1110,14 @@ function pauseMatches(
 async function applyRemotePauses(
   rows: Record<string, unknown>[],
   householdId: string,
-  snapshots: Map<string, Record<string, unknown>>
+  snapshots: Map<string, Record<string, unknown>>,
+  lastSyncedAt: string | null
 ): Promise<number> {
   let n = 0;
   for (const row of rows) {
     const id = String(row.id);
     const local = await getLocalRow(sleepPauses, id);
     const remoteEnd = row.end_time ? String(row.end_time) : null;
-    const localEnd = local?.endTime ? String(local.endTime) : null;
 
     if (local && snapshots.has(snapKey('sleep_pauses', id))) {
       const localPayload = {
@@ -957,10 +1125,19 @@ async function applyRemotePauses(
         household_id: householdId,
         sleep_event_id: String(local.sleepEventId),
         start_time: String(local.startTime),
-        end_time: localEnd,
+        end_time: local.endTime ? String(local.endTime) : null,
       };
       const dirty = hasUnpushedLocalChanges('sleep_pauses', id, localPayload, snapshots);
-      if (dirty && !(remoteEnd && !localEnd)) continue;
+      if (
+        shouldKeepLocalOverRemote({
+          hasLocal: true,
+          localDiffersFromRemote: dirty,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          lastSyncedAt,
+        })
+      ) {
+        continue;
+      }
     }
 
     const pause: SleepPause = {
@@ -969,7 +1146,10 @@ async function applyRemotePauses(
       startTime: String(row.start_time),
       endTime: remoteEnd,
     };
-    if (pauseMatches(local, pause)) continue;
+    if (pauseMatches(local, pause)) {
+      if (remoteUpdatedSinceLastSync(row.updated_at, lastSyncedAt)) n += 1;
+      continue;
+    }
     await upsertById(sleepPauses, pause.id, pause);
     n += 1;
   }
@@ -996,14 +1176,14 @@ function feedingMatches(
 async function applyRemoteFeedings(
   rows: Record<string, unknown>[],
   householdId: string,
-  snapshots: Map<string, Record<string, unknown>>
+  snapshots: Map<string, Record<string, unknown>>,
+  lastSyncedAt: string | null
 ): Promise<number> {
   let n = 0;
   for (const row of rows) {
     const id = String(row.id);
     const local = await getLocalRow(feedingEvents, id);
     const remoteEnd = row.end_time ? String(row.end_time) : null;
-    const localEnd = local?.endTime ? String(local.endTime) : null;
 
     if (local && snapshots.has(snapKey('feeding_events', id))) {
       const dirty = hasUnpushedLocalChanges(
@@ -1012,7 +1192,16 @@ async function applyRemoteFeedings(
         feedingLocalPayload(local, householdId),
         snapshots
       );
-      if (dirty && !(remoteEnd && !localEnd)) continue;
+      if (
+        shouldKeepLocalOverRemote({
+          hasLocal: true,
+          localDiffersFromRemote: dirty,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          lastSyncedAt,
+        })
+      ) {
+        continue;
+      }
     }
 
     const event: FeedingEvent = {
@@ -1026,7 +1215,10 @@ async function applyRemoteFeedings(
       unit: (row.unit as FeedingEvent['unit']) ?? null,
       notes: row.notes ? String(row.notes) : null,
     };
-    if (feedingMatches(local, event)) continue;
+    if (feedingMatches(local, event)) {
+      if (remoteUpdatedSinceLastSync(row.updated_at, lastSyncedAt)) n += 1;
+      continue;
+    }
     await upsertById(feedingEvents, event.id, event);
     n += 1;
   }
@@ -1036,7 +1228,8 @@ async function applyRemoteFeedings(
 async function applyRemoteDiapers(
   rows: Record<string, unknown>[],
   householdId: string,
-  snapshots: Map<string, Record<string, unknown>>
+  snapshots: Map<string, Record<string, unknown>>,
+  lastSyncedAt: string | null
 ): Promise<number> {
   let n = 0;
   for (const row of rows) {
@@ -1056,7 +1249,16 @@ async function applyRemoteDiapers(
         },
         snapshots
       );
-      if (dirty) continue;
+      if (
+        shouldKeepLocalOverRemote({
+          hasLocal: true,
+          localDiffersFromRemote: dirty,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          lastSyncedAt,
+        })
+      ) {
+        continue;
+      }
     }
 
     const event: DiaperEvent = {
@@ -1084,7 +1286,8 @@ async function applyRemoteDiapers(
 async function applyRemoteBaths(
   rows: Record<string, unknown>[],
   householdId: string,
-  snapshots: Map<string, Record<string, unknown>>
+  snapshots: Map<string, Record<string, unknown>>,
+  lastSyncedAt: string | null
 ): Promise<number> {
   let n = 0;
   for (const row of rows) {
@@ -1103,7 +1306,16 @@ async function applyRemoteBaths(
         },
         snapshots
       );
-      if (dirty) continue;
+      if (
+        shouldKeepLocalOverRemote({
+          hasLocal: true,
+          localDiffersFromRemote: dirty,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          lastSyncedAt,
+        })
+      ) {
+        continue;
+      }
     }
 
     const event: BathEvent = {
@@ -1129,7 +1341,8 @@ async function applyRemoteBaths(
 async function applyRemoteWakes(
   rows: Record<string, unknown>[],
   householdId: string,
-  snapshots: Map<string, Record<string, unknown>>
+  snapshots: Map<string, Record<string, unknown>>,
+  lastSyncedAt: string | null
 ): Promise<number> {
   let n = 0;
   for (const row of rows) {
@@ -1150,7 +1363,16 @@ async function applyRemoteWakes(
         },
         snapshots
       );
-      if (dirty) continue;
+      if (
+        shouldKeepLocalOverRemote({
+          hasLocal: true,
+          localDiffersFromRemote: dirty,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          lastSyncedAt,
+        })
+      ) {
+        continue;
+      }
     }
 
     const event: WakeEvent = {
@@ -1238,28 +1460,46 @@ async function applyRemoteChoreCompletions(
 
 async function applyRemoteTags(rows: Record<string, unknown>[]): Promise<number> {
   let n = 0;
+  const db = await getDb();
   for (const row of rows) {
     const id = String(row.id);
-    const local = await getLocalRow(dayContextTags, id);
-    const tag: DayContextTagEvent = {
-      id,
-      babyId: String(row.baby_id),
-      dateKey: String(row.date_key),
-      tag: row.tag as DayContextTag,
-    };
+    const babyId = String(row.baby_id);
+    const dateKey = String(row.date_key);
+    const tagValue = row.tag as DayContextTag;
+
+    const localById = await getLocalRow(dayContextTags, id);
     if (
-      local &&
-      local.babyId === tag.babyId &&
-      local.dateKey === tag.dateKey &&
-      local.tag === tag.tag
+      localById &&
+      localById.babyId === babyId &&
+      localById.dateKey === dateKey &&
+      localById.tag === tagValue
     ) {
       continue;
     }
-    await upsertById(dayContextTags, tag.id, {
-      id: tag.id,
-      babyId: tag.babyId,
-      dateKey: tag.dateKey,
-      tag: tag.tag,
+
+    // Same tag may exist locally under a different id (both parents toggled it).
+    // UNIQUE(baby_id, date_key, tag) — remove the local duplicate before upsert.
+    const conflicts = await db
+      .select()
+      .from(dayContextTags)
+      .where(
+        and(
+          eq(dayContextTags.babyId, babyId),
+          eq(dayContextTags.dateKey, dateKey),
+          eq(dayContextTags.tag, tagValue)
+        )
+      );
+    for (const conflict of conflicts) {
+      if (String(conflict.id) !== id) {
+        await deleteDayContextTag(String(conflict.id));
+      }
+    }
+
+    await upsertById(dayContextTags, id, {
+      id,
+      babyId,
+      dateKey,
+      tag: tagValue,
     });
     n += 1;
   }
@@ -1289,6 +1529,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
   let pushed = 0;
   let pulled = 0;
   const remoteSnapshots = new Map<string, Record<string, unknown>>();
+  const syncState = await getSyncState();
+  const lastSyncedAt = syncState.lastSyncedAt;
 
   try {
     // ── 0. Offline deletes → cloud tombstones
@@ -1306,23 +1548,30 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pulled += await applyRemoteBabies(remoteBabies.rows);
 
     const babyIds = await getLocalBabyIdSet();
+    const sleepFpBefore = await sleepEndFingerprint(babyIds);
 
     const sleepRemote = await pullTable('sleep_events', householdId);
     if (sleepRemote.error) return { ok: false, error: sleepRemote.error };
-    rememberRemoteRows(remoteSnapshots, 'sleep_events', sleepRemote.rows, householdId, (row, hid) => ({
-      id: String(row.id),
-      household_id: hid,
-      baby_id: String(row.baby_id),
-      type: row.type,
-      start_time: String(row.start_time),
-      end_time: row.end_time ? String(row.end_time) : null,
-      extension: row.extension ?? null,
-    }));
+    rememberRemoteRows(
+      remoteSnapshots,
+      'sleep_events',
+      sleepRemote.rows,
+      householdId,
+      sleepRemotePayload
+    );
     pulled += await applyRemoteSleep(
       sleepRemote.rows.filter((row) => babyIds.has(String(row.baby_id))),
       householdId,
-      remoteSnapshots
+      remoteSnapshots,
+      lastSyncedAt
     );
+
+    const sleepFpAfter = await sleepEndFingerprint(babyIds);
+    // Safety net: if sleep open/closed state changed but counters missed it
+    // (e.g. race with a silent pull), still report a received update.
+    if (sleepFpBefore !== sleepFpAfter && pulled === 0) {
+      pulled = 1;
+    }
 
     const localSleepIds = new Set<string>();
     for (const babyId of babyIds) {
@@ -1342,7 +1591,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pulled += await applyRemotePauses(
       pauseRemote.rows.filter((row) => localSleepIds.has(String(row.sleep_event_id))),
       householdId,
-      remoteSnapshots
+      remoteSnapshots,
+      lastSyncedAt
     );
 
     const feedRemote = await pullTable('feeding_events', householdId);
@@ -1362,7 +1612,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pulled += await applyRemoteFeedings(
       feedRemote.rows.filter((row) => babyIds.has(String(row.baby_id))),
       householdId,
-      remoteSnapshots
+      remoteSnapshots,
+      lastSyncedAt
     );
 
     const diaperRemote = await pullTable('diaper_events', householdId);
@@ -1378,7 +1629,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pulled += await applyRemoteDiapers(
       diaperRemote.rows.filter((row) => babyIds.has(String(row.baby_id))),
       householdId,
-      remoteSnapshots
+      remoteSnapshots,
+      lastSyncedAt
     );
 
     const bathRemote = await pullTable('bath_events', householdId);
@@ -1393,7 +1645,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pulled += await applyRemoteBaths(
       bathRemote.rows.filter((row) => babyIds.has(String(row.baby_id))),
       householdId,
-      remoteSnapshots
+      remoteSnapshots,
+      lastSyncedAt
     );
 
     const wakeRemote = await pullTable('wake_events', householdId);
@@ -1410,7 +1663,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
     pulled += await applyRemoteWakes(
       wakeRemote.rows.filter((row) => babyIds.has(String(row.baby_id))),
       householdId,
-      remoteSnapshots
+      remoteSnapshots,
+      lastSyncedAt
     );
 
     const choreRemote = await pullTableOptional('daily_chores', householdId);
@@ -1468,6 +1722,8 @@ export async function syncHouseholdData(): Promise<SyncResult> {
       pulled += await applyRemoteTags(
         tagRemote.rows.filter((row) => babyIds.has(String(row.baby_id)))
       );
+      // Include soft-deleted cloud rows so re-toggled tags revive the same id.
+      await reconcileLocalDayContextTagIds(householdId);
     }
 
     // ── 3. Push only rows that differ from what we pulled from cloud
@@ -1509,6 +1765,13 @@ export async function syncHouseholdData(): Promise<SyncResult> {
             start_time: e.startTime,
             end_time: e.endTime,
             extension: e.extension ?? null,
+            onset_method: e.onsetMethod ?? null,
+            settle_minutes: e.settleMinutes != null ? Number(e.settleMinutes) : null,
+            settle_quality: e.settleQuality ?? null,
+            settle_aid: e.settleAid ?? null,
+            sleep_place: e.sleepPlace ?? null,
+            wake_manner: e.wakeManner ?? null,
+            wake_mood: e.wakeMood ?? null,
             updated_at: now,
             deleted_at: null,
           })),
@@ -1628,16 +1891,20 @@ export async function syncHouseholdData(): Promise<SyncResult> {
           changed = filterTimedEventPushRows('sleep_events', batch.rows, remoteSnapshots);
         } else if (batch.table === 'feeding_events') {
           changed = filterTimedEventPushRows('feeding_events', batch.rows, remoteSnapshots);
+        } else if (batch.table === 'day_context_tags') {
+          changed = filterDayContextTagPushRows(batch.rows, remoteSnapshots);
         } else {
           changed = filterChangedPushRows(batch.table, batch.rows, remoteSnapshots);
         }
         if (changed.length === 0) continue;
         const result = await upsertRemote(batch.table, changed);
         if (result.error) {
-          if (
-            batch.table === 'daily_chore_completions' &&
-            isMissingRemoteTableError(result.error)
-          ) {
+          const optionalPush =
+            batch.table === 'daily_chore_completions' ||
+            batch.table === 'daily_chores' ||
+            batch.table === 'day_context_tags';
+          if (optionalPush && isRemoteSchemaMissingError(result.error)) {
+            // Don't block sleep/feed/diaper sync when optional schema isn't migrated yet.
             continue;
           }
           return { ok: false, error: result.error };

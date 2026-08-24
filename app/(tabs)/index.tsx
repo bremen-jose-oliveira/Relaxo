@@ -17,9 +17,11 @@ import { ConfidenceBadge } from '@/components/ConfidenceBadge';
 import { AgeInsightCard } from '@/components/AgeInsightCard';
 import { WakeReadinessPill } from '@/components/WakeReadinessPill';
 import { NapExtensionSheet } from '@/components/NapExtensionSheet';
+import { SleepContextSheet } from '@/components/SleepContextSheet';
 import { FeedingLogModal } from '@/components/FeedingLogModal';
 import { DiaperLogModal } from '@/components/DiaperLogModal';
 import { BathLogModal } from '@/components/BathLogModal';
+import { DayContextChips } from '@/components/DayContextChips';
 import {
   useAppStore,
   useActiveBaby,
@@ -31,21 +33,29 @@ import { getCurrentSegmentStart } from '@/lib/elapsedTime';
 import { getOngoingPause } from '@/lib/sleepPauses';
 import { SleepTimer } from '@/components/SleepTimer';
 import { formatNapScheduleLabel, resolveNapGoal } from '@/lib/napSchedule';
-import { getTypicalSleepSchedule } from '@/lib/sleepPatterns';
-import { UsualSleepTimes } from '@/components/UsualSleepTimes';
-import { ageInWeeks, formatTime, minutesBetween } from '@/lib/dateUtils';
+import { ageInWeeks, formatDateKey, formatTime, minutesBetween } from '@/lib/dateUtils';
 import { resolveLocale, useTranslation } from '@/lib/i18n';
 import {
   formatBabyAge,
   getWakeReadiness,
 } from '@/lib/sleepInsights';
 import {
+  formatDayContextLabelList,
+  shouldExplainDayContext,
+  shouldSuggestCalmWindow,
+  tagsForDate,
+} from '@/lib/dayContext';
+import {
   getAgeDefaultMidpoint,
   getLastWakeUpTime,
   getPersonalAverageForSlot,
 } from '@/lib/predictNextSleep';
 import { useRouter } from 'expo-router';
-import type { NapExtension } from '@/types';
+import type {
+  DayContextTag,
+  NapExtension,
+} from '@/types';
+import type { SleepContextSelection } from '@/components/SleepContextSheet';
 
 export default function HomeScreen() {
   const scheme = useColorScheme() ?? 'light';
@@ -61,12 +71,15 @@ export default function HomeScreen() {
   const startSleep = useAppStore((s) => s.startSleep);
   const endSleep = useAppStore((s) => s.endSleep);
   const setSleepExtension = useAppStore((s) => s.setSleepExtension);
+  const setSleepContext = useAppStore((s) => s.setSleepContext);
   const pauseSleep = useAppStore((s) => s.pauseSleep);
   const resumeSleep = useAppStore((s) => s.resumeSleep);
   const endBreastFeed = useAppStore((s) => s.endBreastFeed);
   const sleepPauses = useAppStore((s) => s.sleepPauses);
   const events = useAppStore((s) => s.events);
   const wakes = useAppStore((s) => s.wakes);
+  const dayContextTags = useAppStore((s) => s.dayContextTags);
+  const toggleDayTag = useAppStore((s) => s.toggleDayTag);
 
   const baby = useActiveBaby();
   const ongoing = useOngoingSleep();
@@ -78,6 +91,8 @@ export default function HomeScreen() {
   const [diaperOpen, setDiaperOpen] = useState(false);
   const [bathOpen, setBathOpen] = useState(false);
   const [extensionEventId, setExtensionEventId] = useState<string | null>(null);
+  const [contextEventId, setContextEventId] = useState<string | null>(null);
+  const [pendingExtensionAfterContext, setPendingExtensionAfterContext] = useState(false);
   const addDiaper = useAppStore((s) => s.addDiaper);
   const addBath = useAppStore((s) => s.addBath);
   const { height: windowHeight } = useWindowDimensions();
@@ -86,7 +101,14 @@ export default function HomeScreen() {
     initialize();
   }, [initialize]);
 
-  const now = useMemo(() => new Date(), [events, wakes, ongoing]);
+  const now = useMemo(() => new Date(), [events, wakes, ongoing, dayContextTags]);
+  const todayKey = formatDateKey(now);
+
+  const todayTags = useMemo(
+    () => tagsForDate(dayContextTags, todayKey),
+    [dayContextTags, todayKey]
+  );
+  const todayTagSet = useMemo(() => new Set<DayContextTag>(todayTags), [todayTags]);
 
   const wakeReadiness = useMemo(() => {
     if (!baby || ongoing) return null;
@@ -101,13 +123,47 @@ export default function HomeScreen() {
     return getWakeReadiness(awakeMinutes, target);
   }, [baby, ongoing, events, wakes, now, prediction]);
 
+  const showDayContextExplain = shouldExplainDayContext({
+    tags: todayTags,
+    confidence: prediction?.confidence ?? null,
+    wakeReadiness,
+  });
+
+  const showCalmNudge = shouldSuggestCalmWindow({
+    tags: todayTags,
+    wakeReadiness,
+    easilyOverstimulated: baby?.easilyOverstimulated,
+    asleep: ongoing != null,
+  });
+
+  const dayContextLabels = formatDayContextLabelList(todayTags, (tag) =>
+    t(`dayTags.${tag}`)
+  );
+
   const ageLabel = baby ? formatBabyAge(baby.birthDate, now, resolvedLang) : '';
 
   const handleEndSleep = async () => {
     const ended = await endSleep();
-    if (ended?.type === 'nap') {
-      setExtensionEventId(ended.id);
+    if (!ended) return;
+    setPendingExtensionAfterContext(ended.type === 'nap');
+    setContextEventId(ended.id);
+  };
+
+  const finishContextFlow = () => {
+    const id = contextEventId;
+    const showExtension = pendingExtensionAfterContext;
+    setContextEventId(null);
+    setPendingExtensionAfterContext(false);
+    if (showExtension && id) {
+      setExtensionEventId(id);
     }
+  };
+
+  const handleContextSave = async (selection: SleepContextSelection) => {
+    if (contextEventId) {
+      await setSleepContext(contextEventId, selection);
+    }
+    finishContextFlow();
   };
 
   const handleExtensionSelect = async (extension: NapExtension) => {
@@ -167,11 +223,6 @@ export default function HomeScreen() {
   const sleepType = ongoing?.type ?? 'nap';
   const sleepTypeLabel = sleepType === 'night' ? t('home.bedtime') : t('home.nap');
 
-  const napGoal =
-    prediction?.resolvedNapGoal ??
-    resolveNapGoal(baby, events, wakes, new Date()).goal;
-  const usualSchedule = getTypicalSleepSchedule(events, wakes, new Date(), napGoal);
-
   return (
     <SafeAreaView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -198,6 +249,31 @@ export default function HomeScreen() {
 
             {wakeReadiness && !ongoing ? (
               <WakeReadinessPill readiness={wakeReadiness} t={t} />
+            ) : null}
+
+            {showDayContextExplain ? (
+              <Text style={[styles.contextExplain, { color: colors.textSecondary }]}>
+                {prediction?.confidence === 'low'
+                  ? t('home.dayContextExplainLowConfidence', { tags: dayContextLabels })
+                  : t('home.dayContextExplain', { tags: dayContextLabels })}
+              </Text>
+            ) : null}
+
+            {showCalmNudge ? (
+              <View
+                style={[
+                  styles.nudgePill,
+                  {
+                    backgroundColor: colors.confidence.medium + '22',
+                    borderColor: colors.confidence.medium,
+                  },
+                ]}>
+                <Text style={[styles.nudgeText, { color: colors.text }]}>
+                  {baby.easilyOverstimulated
+                    ? t('home.calmWindowNudgeSensitive')
+                    : t('home.calmWindowNudge')}
+                </Text>
+              </View>
             ) : null}
 
             {prediction && !ongoing && !ongoingFeed && (
@@ -297,16 +373,22 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {usualSchedule.length > 0 ? (
-            <Card style={styles.usualCard}>
-              <UsualSleepTimes
-                schedule={usualSchedule}
-                title={t('home.usualTimes')}
-                subtitle={t('history.usualTimesSub')}
-                colors={colors}
-              />
-            </Card>
-          ) : null}
+          <Card style={styles.contextCard}>
+            <Text style={[styles.contextTitle, { color: colors.text }]}>
+              {t('home.dayContextTitle')}
+            </Text>
+            <Text style={[styles.contextHint, { color: colors.textSecondary }]}>
+              {t('home.dayContextHint')}
+            </Text>
+            <DayContextChips
+              compact
+              selected={todayTagSet}
+              onToggle={(tag) => {
+                void toggleDayTag(todayKey, tag);
+              }}
+              t={t}
+            />
+          </Card>
         </View>
 
         <View style={[styles.insightWrap, { borderTopColor: colors.border }]}>
@@ -383,6 +465,12 @@ export default function HomeScreen() {
           setBathOpen(false);
         }}
         onClose={() => setBathOpen(false)}
+      />
+      <SleepContextSheet
+        visible={contextEventId != null}
+        onSave={(selection) => void handleContextSave(selection)}
+        onSkip={finishContextFlow}
+        t={t}
       />
       <NapExtensionSheet
         visible={extensionEventId != null}
@@ -462,9 +550,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.md,
   },
-  usualCard: {
+  contextCard: {
     width: '100%',
     marginTop: spacing.md,
+  },
+  contextTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  contextHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: spacing.sm,
+  },
+  contextExplain: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  nudgePill: {
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+    maxWidth: '100%',
+  },
+  nudgeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   predictionLabel: {
     fontSize: 15,

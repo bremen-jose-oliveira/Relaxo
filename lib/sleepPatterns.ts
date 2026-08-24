@@ -1,7 +1,7 @@
 import type { NapGoal, SleepEvent, SleepSlot, WakeEvent } from '@/types';
 import { getBedtimeSlot } from '@/lib/predictNextSleep';
-import { getDayCycleEvents } from '@/lib/dayAnchor';
-import { startOfDay } from '@/lib/dateUtils';
+import { getDayCycleEvents, getMorningWakeForDay } from '@/lib/dayAnchor';
+import { isSameDay, startOfDay } from '@/lib/dateUtils';
 
 /** Long enough to cover typical Napper imports for young infants. */
 export const SLEEP_PATTERN_LOOKBACK_DAYS = 120;
@@ -10,6 +10,11 @@ export const USUAL_TIMES_LOOKBACK_DAYS = 14;
 const MIN_SAMPLES = 1;
 /** Soft ceiling so one noisy day cannot invent endless slots. */
 const MAX_NAP_ORDINALS = 8;
+/**
+ * Naps this long are almost always mislabeled night sleep.
+ * Exclude them from nap ordinals so Usual times stays chronological.
+ */
+export const LONG_NAP_AS_NIGHT_MINUTES = 4 * 60;
 
 const NAP_ORDINAL_LABELS = [
   '1st nap',
@@ -45,9 +50,26 @@ function napOrdinalLabel(index: number): string {
   return NAP_ORDINAL_LABELS[index] ?? `Nap ${index + 1}`;
 }
 
+function eventDurationMinutes(event: SleepEvent): number | null {
+  if (!event.endTime) return null;
+  const ms =
+    new Date(event.endTime).getTime() - new Date(event.startTime).getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return ms / 60_000;
+}
+
+/** True when a "nap" is long enough to treat as night for pattern boards. */
+export function isLongNapLikelyNight(event: SleepEvent): boolean {
+  if (event.type !== 'nap') return false;
+  const minutes = eventDurationMinutes(event);
+  return minutes != null && minutes >= LONG_NAP_AS_NIGHT_MINUTES;
+}
+
 /**
  * Nap start minutes (in order) plus bedtime from night sleeps on a calendar day.
  * Uses event type — not nap-goal caps — so evening naps stay naps.
+ * Very long naps (≥ 4h) are treated as bedtime so mislabeled nights don't
+ * invent a late "5th/6th nap" slot.
  */
 export function getNapAndBedtimeStartsForDay(
   events: SleepEvent[],
@@ -60,7 +82,7 @@ export function getNapAndBedtimeStartsForDay(
 
   for (const event of dayEvents) {
     const minutes = minutesFromMidnight(new Date(event.startTime));
-    if (event.type === 'night') {
+    if (event.type === 'night' || isLongNapLikelyNight(event)) {
       bedtime = minutes;
     } else {
       naps.push(minutes);
@@ -70,6 +92,37 @@ export function getNapAndBedtimeStartsForDay(
   return { naps, bedtime };
 }
 
+/**
+ * Morning wake minutes from midnight for a calendar day.
+ * Prefers an explicit morning WakeEvent; falls back to night-sleep endTime.
+ * Returns null when neither exists (does not invent midnight).
+ */
+export function getMorningWakeMinutesForDay(
+  events: SleepEvent[],
+  wakes: WakeEvent[],
+  day: Date
+): number | null {
+  const morning = getMorningWakeForDay(wakes, day);
+  if (morning) return minutesFromMidnight(new Date(morning.time));
+
+  const nightEndedToday = events
+    .filter(
+      (e) =>
+        e.type === 'night' &&
+        e.endTime !== null &&
+        isSameDay(new Date(e.endTime), day)
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.endTime!).getTime() - new Date(a.endTime!).getTime()
+    )[0];
+
+  if (nightEndedToday?.endTime) {
+    return minutesFromMidnight(new Date(nightEndedToday.endTime));
+  }
+
+  return null;
+}
 /**
  * Start times (minutes from midnight) for each sleep slot on a calendar day.
  * Naps fill slots in order; night sleep (or sleeps beyond nap goal) map to bedtime.
@@ -90,7 +143,9 @@ export function getStartMinutesBySlotForDay(
   for (const event of dayEvents) {
     const minutes = minutesFromMidnight(new Date(event.startTime));
     const treatAsBedtime =
-      event.type === 'night' || napIndex >= napGoal;
+      event.type === 'night' ||
+      isLongNapLikelyNight(event) ||
+      napIndex >= napGoal;
 
     if (treatAsBedtime) {
       result[bedtimeSlot] = minutes;
@@ -139,10 +194,10 @@ export function getTypicalStartTimeForSlot(
 }
 
 export type TypicalSlotStart = {
-  /** Stable row id: `nap-0` … or `bedtime`. */
+  /** Stable row id: `wake`, `nap-0` … or `bedtime`. */
   id: string;
   /** @deprecated Prefer `id`; kept for older call sites that keyed on slot index. */
-  slot: number | 'bedtime';
+  slot: number | 'wake' | 'bedtime';
   slotLabel: string;
   typicalTime: Date;
   sampleCount: number;
@@ -161,11 +216,13 @@ export function getTypicalSleepSchedule(
 ): TypicalSlotStart[] {
   const napSamples: number[][] = Array.from({ length: MAX_NAP_ORDINALS }, () => []);
   const bedtimeSamples: number[] = [];
+  const wakeSamples: number[] = [];
 
   for (let i = 0; i < lookbackDays; i++) {
     const day = startOfDay(now);
     day.setDate(day.getDate() - i);
     const { naps, bedtime } = getNapAndBedtimeStartsForDay(events, wakes, day);
+    const wakeMinutes = getMorningWakeMinutesForDay(events, wakes, day);
 
     for (let n = 0; n < Math.min(naps.length, MAX_NAP_ORDINALS); n++) {
       napSamples[n]!.push(naps[n]!);
@@ -173,19 +230,44 @@ export function getTypicalSleepSchedule(
     if (bedtime !== null) {
       bedtimeSamples.push(bedtime);
     }
+    if (wakeMinutes !== null) {
+      wakeSamples.push(wakeMinutes);
+    }
   }
 
-  const result: TypicalSlotStart[] = [];
+  const napRows: TypicalSlotStart[] = [];
 
   for (let n = 0; n < MAX_NAP_ORDINALS; n++) {
     const samples = napSamples[n]!;
     if (samples.length < MIN_SAMPLES) continue;
-    result.push({
+    napRows.push({
       id: `nap-${n}`,
       slot: n,
       slotLabel: napOrdinalLabel(n),
       typicalTime: minutesToDate(median(samples), now),
       sampleCount: samples.length,
+    });
+  }
+
+  // Medians per ordinal can go out of clock order (sparse 5th/6th nap days).
+  // Sort by time and re-label so Usual times always reads earlier → later.
+  napRows.sort(
+    (a, b) => a.typicalTime.getTime() - b.typicalTime.getTime()
+  );
+  const result: TypicalSlotStart[] = napRows.map((row, index) => ({
+    ...row,
+    id: `nap-${index}`,
+    slot: index,
+    slotLabel: napOrdinalLabel(index),
+  }));
+
+  if (wakeSamples.length >= MIN_SAMPLES) {
+    result.unshift({
+      id: 'wake',
+      slot: 'wake',
+      slotLabel: 'Wake up',
+      typicalTime: minutesToDate(median(wakeSamples), now),
+      sampleCount: wakeSamples.length,
     });
   }
 

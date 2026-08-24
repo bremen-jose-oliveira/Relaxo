@@ -64,20 +64,3 @@ export function useSleepTimerDisplay(
     paused: false,
   };
 }
-
-/** @deprecated use useSleepTimerDisplay */
-export function useSleepElapsedClock(
-  active: boolean,
-  sleepEventId: string | undefined,
-  startTime: string | undefined,
-  pauses: SleepPause[]
-): string {
-  const { segmentClock, totalClock, showTotalLine } = useSleepTimerDisplay(
-    active,
-    sleepEventId,
-    startTime,
-    pauses,
-    false
-  );
-  return showTotalLine ? totalClock : segmentClock;
-}

@@ -22,6 +22,38 @@ export type NapExtension =
   | 'contact'
   | 'not_extended';
 
+/** @deprecated Prefer settleAid + sleepPlace; kept for older sync rows. */
+export type SleepOnsetMethod =
+  | 'crib'
+  | 'breast'
+  | 'held'
+  | 'cosleep'
+  | 'bottle'
+  | 'stroller'
+  | 'car'
+  | 'swing';
+
+/** Whether the baby was woken or woke on their own. */
+export type SleepWakeManner = 'woken' | 'self';
+
+/** Mood when waking from this sleep. */
+export type SleepWakeMood = 'fussy' | 'ok' | 'happy';
+
+/** How settling felt (Einschlafqualität). */
+export type SleepSettleQuality = 'calm' | 'restless' | 'fussy' | 'fighting';
+
+/** What helped them fall asleep (Einschlafhilfe). */
+export type SleepSettleAid =
+  | 'breast'
+  | 'held'
+  | 'on_mom'
+  | 'on_dad'
+  | 'visual_shield'
+  | 'combination';
+
+/** Where they slept once asleep (Schlafort). */
+export type SleepPlace = 'mom' | 'dad' | 'crib';
+
 export type DayContextTag =
   | 'outing'
   | 'visitors'
@@ -45,6 +77,20 @@ export type SleepEvent = {
   endTime: string | null; // null while currently asleep
   /** How the nap was extended into another sleep cycle; null/undefined if not set. */
   extension?: NapExtension | null;
+  /** @deprecated Prefer settleAid + sleepPlace. */
+  onsetMethod?: SleepOnsetMethod | null;
+  /** Minutes from put-down / settle start until asleep. */
+  settleMinutes?: number | null;
+  /** Quality of falling asleep. */
+  settleQuality?: SleepSettleQuality | null;
+  /** Aid used to fall asleep. */
+  settleAid?: SleepSettleAid | null;
+  /** Where they slept once asleep. */
+  sleepPlace?: SleepPlace | null;
+  /** Woken vs self-woke; null/undefined if not set. */
+  wakeManner?: SleepWakeManner | null;
+  /** Mood on wake; null/undefined if not set. */
+  wakeMood?: SleepWakeMood | null;
 };
 
 export type DayContextTagEvent = {

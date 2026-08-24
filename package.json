@@ -1,8 +1,9 @@
 {
   "name": "relaxo",
   "main": "expo-router/entry",
-  "version": "1.0.2",
+  "version": "1.0.7",
   "dependencies": {
+    "@expo/ui": "~56.0.24",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
     "@supabase/supabase-js": "^2.110.7",
@@ -27,6 +28,7 @@
     "expo-symbols": "~56.0.6",
     "expo-updates": "~56.0.19",
     "expo-web-browser": "~56.0.5",
+    "expo-widgets": "~56.0.25",
     "papaparse": "^5.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -42,6 +44,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@bacons/apple-targets": "^5.0.0",
     "@types/jest": "29.5.14",
     "@types/papaparse": "^5.5.2",
     "@types/react": "~19.2.2",
@@ -50,15 +53,17 @@
     "jest": "^29.7.0",
     "jest-expo": "^56.0.5",
     "jose": "^6.2.3",
+    "patch-package": "^8.0.1",
     "postgres": "^3.4.9",
     "ts-jest": "^29.4.11",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
+    "postinstall": "patch-package",
     "test": "jest",
     "db:generate": "drizzle-kit generate",
     "db:supabase": "node scripts/supabase-migrate.mjs",
@@ -69,7 +74,7 @@
     "build:android:preview": "eas build --platform android --profile preview",
     "sync:preview-build": "node scripts/sync-preview-build.mjs",
     "generate:apple-secret": "node scripts/generate-apple-secret.mjs",
-    "generate:icons": "cd assets/images && magick -background none logo.svg -resize 1024x1024 icon.png && magick -background none logo.svg -resize 512x512 splash-icon.png && magick -background none logo.svg -resize 1024x1024 android-icon-foreground.png && magick -size 1024x1024 xc:'#7C9A92' android-icon-background.png && magick -background none logo.svg -resize 48x48 favicon.png"
+    "generate:icons": "cd assets/images && magick logo.png -resize 1024x1024 icon.png && magick logo.png -resize 512x512 splash-icon.png && magick logo.png -resize 1024x1024 android-icon-foreground.png && magick -size 1024x1024 xc:'#0A122E' android-icon-background.png && magick logo.png -colorspace Gray -resize 1024x1024 android-icon-monochrome.png && magick logo.png -resize 48x48 favicon.png && magick -size 96x96 xc:none -fill white -draw 'circle 48,48 48,18' \\( -size 96x96 xc:none -fill black -draw 'circle 62,40 62,12' \\) -compose dst_out -composite notification-icon.png"
   },
   "private": true
 }

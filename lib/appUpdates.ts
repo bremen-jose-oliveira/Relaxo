@@ -1,16 +1,55 @@
 import { BackHandler, Platform } from 'react-native';
 import Constants from 'expo-constants';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Linking from 'expo-linking';
 import * as Updates from 'expo-updates';
 import latestPreviewBuild from '@/assets/latest-preview-build.json';
 
 /**
- * Leave the running app after kicking off a native install.
- * Android can force-exit; iOS backgrounds when the install sheet opens (no force-quit without a native module).
+ * Force-quit after kicking off a native install so the running binary
+ * is not overwritten in the foreground (that causes open→close loops).
+ * Uses the local AppExit Expo module (needs a preview build that includes it).
  */
 export function exitAppAfterInstallTrigger(): void {
+  try {
+    // Lazy require so Jest / Expo Go don't crash on import.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { exitApp } = require('@/modules/app-exit') as {
+      exitApp: () => void;
+    };
+    exitApp();
+    return;
+  } catch {
+    // Module missing in older binaries / Expo Go
+  }
+
   if (Platform.OS === 'android') {
     BackHandler.exitApp();
+  }
+}
+
+/**
+ * Best-effort wipe of Expo Updates / cache leftovers before replacing the binary.
+ * Prevents the next install from inheriting a stale update cache from the previous build.
+ */
+export async function clearInstallLeftovers(): Promise<void> {
+  const roots = [FileSystem.cacheDirectory, FileSystem.documentDirectory].filter(
+    (d): d is string => Boolean(d)
+  );
+
+  for (const root of roots) {
+    try {
+      const entries = await FileSystem.readDirectoryAsync(root);
+      for (const name of entries) {
+        if (
+          /expo|updates|Exponent|EASUpdate|dev\.expo|com\.expo/i.test(name)
+        ) {
+          await FileSystem.deleteAsync(`${root}${name}`, { idempotent: true });
+        }
+      }
+    } catch {
+      // Sandbox may deny some paths — ignore
+    }
   }
 }
 
@@ -98,6 +137,53 @@ export function getLatestPreviewBuildForPlatform(
   return entry;
 }
 
+/**
+ * Prefer live pointer from Supabase (updated by `npm run sync:preview-build`),
+ * fall back to the JSON baked into the app bundle.
+ */
+export async function resolveLatestPreviewBuild(
+  platform: 'ios' | 'android' = Platform.OS === 'android' ? 'android' : 'ios'
+): Promise<PlatformBuildMeta | null> {
+  try {
+    // Lazy so unit tests don't load AsyncStorage / native supabase client.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getSupabase } = require('@/lib/supabase') as typeof import('@/lib/supabase');
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('latest_preview_build')
+        .select(
+          'ios_build_id, ios_artifact_url, android_build_id, android_artifact_url'
+        )
+        .eq('id', 'preview')
+        .maybeSingle();
+
+      if (!error && data) {
+        if (platform === 'ios' && data.ios_build_id) {
+          return {
+            buildId: String(data.ios_build_id),
+            artifactUrl: data.ios_artifact_url
+              ? String(data.ios_artifact_url)
+              : null,
+          };
+        }
+        if (platform === 'android' && data.android_build_id) {
+          return {
+            buildId: String(data.android_build_id),
+            artifactUrl: data.android_artifact_url
+              ? String(data.android_artifact_url)
+              : null,
+          };
+        }
+      }
+    }
+  } catch {
+    // Table missing / offline / test env — use bundled JSON
+  }
+
+  return getLatestPreviewBuildForPlatform(platform);
+}
+
 export async function checkAndDownloadUpdate(): Promise<UpdateCheckOutcome> {
   if (!Updates.isEnabled || __DEV__) {
     return { status: 'unsupported' };
@@ -128,21 +214,22 @@ export async function reloadWithLatestUpdate(): Promise<void> {
 }
 
 /**
- * Opens the latest preview build install flow (same as scanning the EAS QR code).
- * iOS: itms-services manifest install. Android: direct APK when available, else build page.
+ * Clears Expo leftovers, then opens the latest preview install flow
+ * (same as scanning the EAS QR code).
  *
- * Callers should exit/close the app after a successful `opened` result so the running
- * binary is not overwritten in the foreground (that causes open→close loops).
+ * Callers should call `exitAppAfterInstallTrigger` shortly after `opened`
+ * so the running app is not overwritten in the foreground.
  *
- * Keep assets/latest-preview-build.json fresh (`npm run sync:preview-build` after each
- * eas build).
+ * Keep the cloud pointer fresh with `npm run sync:preview-build` after each eas build.
  */
 export async function openLatestBuildInstall(): Promise<BuildInstallOutcome> {
   const platform = Platform.OS === 'android' ? 'android' : 'ios';
-  const build = getLatestPreviewBuildForPlatform(platform);
+  const build = await resolveLatestPreviewBuild(platform);
   if (!build) {
     return { status: 'no_build' };
   }
+
+  await clearInstallLeftovers();
 
   const { projectId } = getExpoProjectMeta();
 
@@ -173,15 +260,3 @@ export async function openLatestBuildInstall(): Promise<BuildInstallOutcome> {
   }
 }
 
-/** @deprecated use openLatestBuildInstall */
-export async function openBuildsPage(): Promise<void> {
-  const outcome = await openLatestBuildInstall();
-  if (outcome.status === 'no_build') {
-    const url = getExpoBuildsUrl();
-    await Linking.openURL(url);
-    return;
-  }
-  if (outcome.status === 'error') {
-    throw new Error(outcome.message);
-  }
-}

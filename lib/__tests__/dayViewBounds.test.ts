@@ -1,13 +1,11 @@
 import type { SleepEvent, WakeEvent } from '@/types';
-import { getDayViewBounds, isWakeDayAnchored } from '../dayAnchor';
+import { getDayViewBounds } from '../dayAnchor';
 
 describe('day view bounds', () => {
   it('uses calendar day when no wake anchors (typical import gap)', () => {
     const feedings = [{ startTime: '2025-06-10T12:00:00' }];
     const events: SleepEvent[] = [];
     const wakes: WakeEvent[] = [];
-
-    expect(isWakeDayAnchored(events, wakes, new Date('2025-06-10'))).toBe(false);
 
     const bounds = getDayViewBounds(events, wakes, new Date('2025-06-10'));
     expect(bounds.mode).toBe('calendar');

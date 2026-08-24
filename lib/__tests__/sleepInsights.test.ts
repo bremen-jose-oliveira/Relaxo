@@ -139,4 +139,102 @@ describe('sleepInsights', () => {
     expect(stats.extensionSuccessPercent).toBe(50);
     expect(stats.avgNapMinutes).toBe(40);
   });
+
+  it('excludes multi-hour nap-as-night from longest nap stats', () => {
+    const events = [
+      nap('short', '2026-06-20T10:00:00', '2026-06-20T10:45:00'),
+      // ~28h "nap" (bad/forgotten end) must not become longest nap
+      nap('bogus', '2026-06-18T10:00:00', '2026-06-19T13:59:00'),
+    ];
+    const stats = getSleepStats(events, [], [], now, 30);
+    expect(stats.longestNapMinutes).toBe(45);
+    expect(stats.avgNapMinutes).toBe(45);
+  });
+
+  it('computes sleep context percents', () => {
+    const events: SleepEvent[] = [
+      {
+        ...nap('a', '2026-06-20T10:00:00', '2026-06-20T10:40:00'),
+        onsetMethod: 'crib',
+        sleepPlace: 'crib',
+        settleQuality: 'calm',
+        settleMinutes: 10,
+        wakeManner: 'self',
+        wakeMood: 'happy',
+      },
+      {
+        ...nap('b', '2026-06-19T10:00:00', '2026-06-19T10:40:00'),
+        onsetMethod: 'held',
+        settleAid: 'held',
+        sleepPlace: 'mom',
+        settleQuality: 'fighting',
+        settleMinutes: 30,
+        wakeManner: 'woken',
+        wakeMood: 'fussy',
+      },
+    ];
+    const stats = getSleepStats(events, [], [], now, 30);
+    expect(stats.selfWakePercent).toBe(50);
+    expect(stats.cribOnsetPercent).toBe(50);
+    expect(stats.calmSettlePercent).toBe(50);
+    expect(stats.avgSettleMinutes).toBe(20);
+    expect(stats.happyWakePercent).toBe(50);
+  });
+
+  it('derives crib place from legacy onsetMethod', () => {
+    const events: SleepEvent[] = [
+      {
+        ...nap('a', '2026-06-20T10:00:00', '2026-06-20T10:40:00'),
+        onsetMethod: 'crib',
+      },
+      {
+        ...nap('b', '2026-06-19T10:00:00', '2026-06-19T10:40:00'),
+        onsetMethod: 'held',
+      },
+    ];
+    const stats = getSleepStats(events, [], [], now, 30);
+    expect(stats.cribOnsetPercent).toBe(100);
+  });
+
+  it('averages night sleep and typical morning wake', () => {
+    const events: SleepEvent[] = [
+      {
+        id: 'n1',
+        babyId: 'b1',
+        type: 'night',
+        startTime: '2026-06-19T20:00:00',
+        endTime: '2026-06-20T06:30:00',
+        extension: null,
+      },
+      {
+        id: 'n2',
+        babyId: 'b1',
+        type: 'night',
+        startTime: '2026-06-18T20:00:00',
+        endTime: '2026-06-19T07:00:00',
+        extension: null,
+      },
+      nap('1', '2026-06-20T10:00:00', '2026-06-20T10:40:00'),
+    ];
+    const wakes = [
+      morningWake('2026-06-20T06:30:00'),
+      morningWake('2026-06-19T07:00:00'),
+    ];
+    const stats = getSleepStats(events, [], wakes, now, 7);
+    expect(stats.avgNightSleepMinutes).toBe(645); // (10.5h + 11h) / 2
+    expect(stats.typicalMorningWakeMinutes).toBe(6 * 60 + 45); // median 6:30 and 7:00
+  });
+
+  it('respects shorter lookback for stats', () => {
+    const events = [
+      nap('1', '2026-06-20T10:00:00', '2026-06-20T10:40:00'),
+      nap('old', '2026-05-01T10:00:00', '2026-05-01T11:00:00'),
+    ];
+    const stats7 = getSleepStats(events, [], [], now, 7);
+    const stats30 = getSleepStats(events, [], [], now, 30);
+    expect(stats7.avgNapMinutes).toBe(40);
+    expect(stats30.avgNapMinutes).toBe(40);
+    expect(stats7.longestNapMinutes).toBe(40);
+    expect(stats30.longestNapMinutes).toBe(40);
+  });
 });

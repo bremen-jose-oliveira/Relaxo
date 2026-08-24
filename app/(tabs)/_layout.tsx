@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { SettingsHeaderButton } from '@/components/SettingsHeaderButton';
 import { useAppStore } from '@/store/useAppStore';
 import { useTranslation } from '@/lib/i18n';
 
@@ -31,6 +32,7 @@ export default function TabLayout() {
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
         headerTitleStyle: { fontWeight: '700' },
+        headerRight: () => <SettingsHeaderButton />,
       }}>
       <Tabs.Screen
         name="index"
@@ -65,9 +67,10 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="insights"
         options={{
-          title: t('tabs.history'),
+          title: t('tabs.insights'),
+          tabBarLabel: t('tabs.insights'),
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'chart.bar.fill', android: 'bar_chart', web: 'bar_chart' }}

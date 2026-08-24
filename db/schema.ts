@@ -33,6 +33,25 @@ export const sleepEvents = sqliteTable(
     extension: text('extension', {
       enum: ['independent', 'feeding', 'rocking', 'contact', 'not_extended'],
     }),
+    onsetMethod: text('onset_method', {
+      enum: ['crib', 'breast', 'held', 'cosleep', 'bottle', 'stroller', 'car', 'swing'],
+    }),
+    settleMinutes: integer('settle_minutes'),
+    settleQuality: text('settle_quality', {
+      enum: ['calm', 'restless', 'fussy', 'fighting'],
+    }),
+    settleAid: text('settle_aid', {
+      enum: ['breast', 'held', 'on_mom', 'on_dad', 'visual_shield', 'combination'],
+    }),
+    sleepPlace: text('sleep_place', {
+      enum: ['mom', 'dad', 'crib'],
+    }),
+    wakeManner: text('wake_manner', {
+      enum: ['woken', 'self'],
+    }),
+    wakeMood: text('wake_mood', {
+      enum: ['fussy', 'ok', 'happy'],
+    }),
   },
   (table) => [
     index('idx_sleep_events_baby').on(table.babyId),

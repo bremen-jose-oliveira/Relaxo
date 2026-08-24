@@ -66,6 +66,35 @@ create table if not exists public.sleep_events (
     extension is null
     or extension in ('independent', 'feeding', 'rocking', 'contact', 'not_extended')
   ),
+  onset_method text check (
+    onset_method is null
+    or onset_method in (
+      'crib', 'breast', 'held', 'cosleep', 'bottle', 'stroller', 'car', 'swing'
+    )
+  ),
+  settle_minutes integer check (settle_minutes is null or settle_minutes >= 0),
+  settle_quality text check (
+    settle_quality is null
+    or settle_quality in ('calm', 'restless', 'fussy', 'fighting')
+  ),
+  settle_aid text check (
+    settle_aid is null
+    or settle_aid in (
+      'breast', 'held', 'on_mom', 'on_dad', 'visual_shield', 'combination'
+    )
+  ),
+  sleep_place text check (
+    sleep_place is null
+    or sleep_place in ('mom', 'dad', 'crib')
+  ),
+  wake_manner text check (
+    wake_manner is null
+    or wake_manner in ('woken', 'self')
+  ),
+  wake_mood text check (
+    wake_mood is null
+    or wake_mood in ('fussy', 'ok', 'happy')
+  ),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz
 );
@@ -180,12 +209,15 @@ create table if not exists public.day_context_tags (
     )
   ),
   updated_at timestamptz not null default now(),
-  deleted_at timestamptz,
-  unique (household_id, baby_id, date_key, tag)
+  deleted_at timestamptz
 );
 
 create index if not exists idx_day_context_tags_household on public.day_context_tags (household_id);
 create index if not exists idx_day_context_tags_baby_date on public.day_context_tags (baby_id, date_key);
+-- Soft-deleted rows must not block re-adding the same tag.
+create unique index if not exists day_context_tags_live_uniq
+  on public.day_context_tags (household_id, baby_id, date_key, tag)
+  where deleted_at is null;
 
 -- Auto-create profile on signup
 create or replace function public.handle_new_user()
@@ -331,3 +363,75 @@ $$;
 
 revoke all on function public.join_household_by_invite(text) from public;
 grant execute on function public.join_household_by_invite(text) to authenticated;
+
+-- Public pointer to the latest EAS preview build (install button).
+create table if not exists public.latest_preview_build (
+  id text primary key default 'preview',
+  ios_build_id text,
+  ios_artifact_url text,
+  android_build_id text,
+  android_artifact_url text,
+  synced_at timestamptz not null default now()
+);
+
+alter table public.latest_preview_build enable row level security;
+
+drop policy if exists "latest_preview_build_select" on public.latest_preview_build;
+create policy "latest_preview_build_select" on public.latest_preview_build
+  for select using (true);
+
+insert into public.latest_preview_build (id)
+values ('preview')
+on conflict (id) do nothing;
+
+-- Realtime: partner phones pull when household rows change.
+do $$
+begin
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    create publication supabase_realtime;
+  end if;
+end $$;
+
+do $$
+declare
+  tbl text;
+  tables text[] := array[
+    'sleep_events',
+    'sleep_pauses',
+    'feeding_events',
+    'diaper_events',
+    'bath_events',
+    'wake_events',
+    'day_context_tags',
+    'babies',
+    'daily_chores',
+    'daily_chore_completions'
+  ];
+begin
+  foreach tbl in array tables loop
+    begin
+      execute format(
+        'alter publication supabase_realtime add table public.%I',
+        tbl
+      );
+    exception
+      when duplicate_object then
+        null;
+      when undefined_table then
+        raise notice 'skip missing table %', tbl;
+    end;
+  end loop;
+end $$;
+
+alter table public.sleep_events replica identity full;
+alter table public.sleep_pauses replica identity full;
+alter table public.feeding_events replica identity full;
+alter table public.diaper_events replica identity full;
+alter table public.bath_events replica identity full;
+alter table public.wake_events replica identity full;
+alter table public.day_context_tags replica identity full;
+alter table public.babies replica identity full;
+alter table public.daily_chores replica identity full;
+alter table public.daily_chore_completions replica identity full;
+
+notify pgrst, 'reload schema';

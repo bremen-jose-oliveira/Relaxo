@@ -109,6 +109,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       householdName: meta.householdName,
       lastSyncedAt: meta.lastSyncedAt,
     });
+    try {
+      const { publishWidgetBridge } = await import('@/lib/widgetBridge');
+      await publishWidgetBridge();
+    } catch {
+      // ignore — native bridge may be unavailable in tests / Android
+    }
   },
 
   signInApple: async () => {

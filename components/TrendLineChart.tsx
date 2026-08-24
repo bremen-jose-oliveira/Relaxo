@@ -15,6 +15,8 @@ type Props = {
   height?: number;
   onDayPress?: (dateKey: string) => void;
   emptyLabel?: string;
+  /** Line/area color; defaults to theme tint. */
+  color?: string;
 };
 
 export function TrendLineChart({
@@ -26,11 +28,12 @@ export function TrendLineChart({
   height = 148,
   onDayPress,
   emptyLabel,
+  color,
 }: Props) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const chartWidth = useChartWidth();
-  const lineColor = colors.tint;
+  const lineColor = color ?? colors.tint;
 
   const yLabelFormatter =
     formatYLabel ?? (yAxisSuffix ? (label: string) => `${label}${yAxisSuffix}` : undefined);

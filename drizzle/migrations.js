@@ -17,6 +17,8 @@ import m0012 from './0012_task_reminders.sql';
 import m0013 from './0013_household_name.sql';
 import m0014 from './0014_active_baby.sql';
 import m0015 from './0015_pending_sync_deletes.sql';
+import m0016 from './0016_sleep_context.sql';
+import m0017 from './0017_sleep_settle.sql';
 
 export default {
   journal,
@@ -37,5 +39,7 @@ export default {
     m0013,
     m0014,
     m0015,
+    m0016,
+    m0017,
   },
 };

@@ -3,6 +3,7 @@ import { Colors, spacing } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { formatDate, formatTime } from '@/lib/dateUtils';
 import { isInstantFeeding } from '@/lib/feedingUtils';
+import { resolveSettleFields } from '@/lib/sleepSettle';
 import { useTranslation } from '@/lib/i18n';
 import { useAppStore } from '@/store/useAppStore';
 import type { TimelineItem } from '@/types';
@@ -21,13 +22,31 @@ function getMeta(
   switch (item.kind) {
     case 'sleep': {
       const e = item.data;
+      const settle = resolveSettleFields(e);
+      const contextBits: string[] = [];
+      if (settle.settleMinutes != null) {
+        contextBits.push(t('home.sleepContextMinutesChip', { min: settle.settleMinutes }));
+      }
+      if (settle.settleQuality) {
+        contextBits.push(t(`sleepSettleQuality.${settle.settleQuality}`));
+      }
+      if (settle.settleAid) {
+        contextBits.push(t(`sleepSettleAid.${settle.settleAid}`));
+      }
+      if (settle.sleepPlace) {
+        contextBits.push(t(`sleepPlace.${settle.sleepPlace}`));
+      }
+      if (e.wakeManner) contextBits.push(t(`sleepWakeManner.${e.wakeManner}`));
+      if (e.wakeMood) contextBits.push(t(`sleepWakeMood.${e.wakeMood}`));
+      const timeLine = `${formatDate(new Date(e.startTime))} · ${formatTime(new Date(e.startTime))}${
+        e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : ` – ${t('common.ongoing')}`
+      }`;
       return {
         icon: '💤',
         color: colors.tint,
         label: e.type === 'nap' ? t('timeline.nap') : t('timeline.bedtime'),
-        subtitle: `${formatDate(new Date(e.startTime))} · ${formatTime(new Date(e.startTime))}${
-          e.endTime ? ` – ${formatTime(new Date(e.endTime))}` : ` – ${t('common.ongoing')}`
-        }`,
+        subtitle:
+          contextBits.length > 0 ? `${timeLine}\n${contextBits.join(' · ')}` : timeLine,
         badge: !e.endTime ? t('common.ongoing') : null,
       };
     }
@@ -131,7 +150,9 @@ export function TimelineEntry({ item, onPress, onLongPress }: Props) {
               <Text style={[styles.badge, { color: colors.asleep }]}>{meta.badge}</Text>
             )}
           </View>
-          <Text style={[styles.subtitle, { color: colors.text }]}>{meta.subtitle}</Text>
+          <Text style={[styles.subtitle, { color: colors.text }]}>
+            {meta.subtitle}
+          </Text>
         </View>
       </View>
     </Pressable>

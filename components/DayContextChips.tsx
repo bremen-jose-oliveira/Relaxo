@@ -46,19 +46,24 @@ export function DayContextChips({
   selected,
   onToggle,
   t,
+  compact = false,
 }: {
   selected: Set<DayContextTag>;
   onToggle: (tag: DayContextTag) => void;
   t: (key: string) => string;
+  /** Tighter chips for Home quick-tagging. */
+  compact?: boolean;
 }) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
 
   return (
     <View style={styles.wrap}>
-      <Text style={[styles.hint, { color: colors.textSecondary }]}>
-        {t('history.dayTagsHint')}
-      </Text>
+      {!compact ? (
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>
+          {t('history.dayTagsHint')}
+        </Text>
+      ) : null}
       <View style={styles.row}>
         {DAY_CONTEXT_TAG_ORDER.map((tag) => {
           const on = selected.has(tag);
@@ -71,7 +76,7 @@ export function DayContextChips({
               accessibilityLabel={label}
               accessibilityState={{ selected: on }}
               style={[
-                styles.chip,
+                compact ? styles.chipCompact : styles.chip,
                 {
                   borderColor: on ? colors.tint : colors.border,
                   backgroundColor: on ? colors.tint : colors.card,
@@ -80,10 +85,13 @@ export function DayContextChips({
               <SymbolView
                 name={DAY_CONTEXT_ICONS[tag]}
                 tintColor={on ? '#FFFFFF' : colors.text}
-                size={18}
+                size={compact ? 15 : 18}
               />
               <Text
-                style={[styles.chipLabel, { color: on ? '#FFFFFF' : colors.text }]}
+                style={[
+                  compact ? styles.chipLabelCompact : styles.chipLabel,
+                  { color: on ? '#FFFFFF' : colors.text },
+                ]}
                 numberOfLines={1}>
                 {label}
               </Text>
@@ -110,8 +118,23 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
   },
+  chipCompact: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
   chipLabel: {
     fontSize: 13,
+    fontWeight: '600',
+  },
+  chipLabelCompact: {
+    fontSize: 12,
     fontWeight: '600',
   },
 });

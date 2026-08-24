@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { newId } from '@/lib/newId';
-import type { Baby, BathEvent, ChoreRecurrence, DailyChore, DayContextTag, DayContextTagEvent, DiaperEvent, FeedingEvent, NapExtension, SleepEvent, SleepPause, WakeEvent, AppLocale } from '@/types';
+import type { Baby, BathEvent, ChoreRecurrence, DailyChore, DayContextTag, DayContextTagEvent, DiaperEvent, FeedingEvent, NapExtension, SleepEvent, SleepOnsetMethod, SleepPause, SleepPlace, SleepSettleAid, SleepSettleQuality, SleepWakeManner, SleepWakeMood, WakeEvent, AppLocale } from '@/types';
+import { deriveOnsetMethodFromSettle } from '@/lib/sleepSettle';
 import {
   bulkInsertBathEvents,
   bulkInsertDiaperEvents,
@@ -68,11 +69,52 @@ import {
   snoozeTaskUntilTonight,
   syncTaskReminders,
 } from '@/lib/taskReminders';
-import { scheduleHouseholdAutoSync } from '@/lib/autoSync';
+import { flushHouseholdAutoSyncNow, scheduleHouseholdAutoSync } from '@/lib/autoSync';
+import { syncSleepHomeWidget } from '@/lib/sleepHomeWidget';
+import { syncSleepLiveActivity } from '@/lib/sleepLiveActivity';
 
 /** Queue a background cloud sync when in a household (no-op otherwise). */
 function queueCloudSync() {
   scheduleHouseholdAutoSync();
+}
+
+/** Sleep start/end/pause: push immediately so the partner phone updates right away. */
+async function flushCloudSync() {
+  await flushHouseholdAutoSyncNow();
+}
+
+function syncSleepSurfacesFromStore(state: {
+  events: SleepEvent[];
+  sleepPauses: SleepPause[];
+  wakes: WakeEvent[];
+  prediction: PredictResult | null;
+  locale: AppLocale;
+  babies: Baby[];
+  activeBabyId: string | null;
+}) {
+  const ongoing = isCurrentlyAsleep(state.events);
+  const baby = state.babies.find((b) => b.id === state.activeBabyId) ?? null;
+
+  syncSleepHomeWidget({
+    ongoing,
+    pauses: state.sleepPauses,
+    events: state.events,
+    wakes: state.wakes,
+    prediction: state.prediction,
+    baby,
+    locale: state.locale,
+    babyName: baby?.name ?? null,
+  });
+
+  if (!ongoing) {
+    syncSleepLiveActivity(null);
+    return;
+  }
+  syncSleepLiveActivity({
+    ongoing,
+    pauses: state.sleepPauses,
+    locale: state.locale,
+  });
 }
 
 type AppState = {
@@ -101,6 +143,18 @@ type AppState = {
   startSleep: (type: 'nap' | 'night') => Promise<void>;
   endSleep: () => Promise<SleepEvent | null>;
   setSleepExtension: (eventId: string, extension: NapExtension) => Promise<void>;
+  setSleepContext: (
+    eventId: string,
+    context: {
+      onsetMethod?: SleepOnsetMethod | null;
+      settleMinutes?: number | null;
+      settleQuality?: SleepSettleQuality | null;
+      settleAid?: SleepSettleAid | null;
+      sleepPlace?: SleepPlace | null;
+      wakeManner?: SleepWakeManner | null;
+      wakeMood?: SleepWakeMood | null;
+    }
+  ) => Promise<void>;
   pauseSleep: () => Promise<void>;
   resumeSleep: () => Promise<void>;
   addSleepEvent: (event: Omit<SleepEvent, 'id'>) => Promise<SleepEvent>;
@@ -199,6 +253,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     ]);
     set({ events, sleepPauses, feedings, diapers, baths, wakes, isLoading: false });
     await Promise.all([get().recomputePrediction(), get().refreshChores()]);
+    syncSleepSurfacesFromStore(get());
+    try {
+      const { publishWidgetBridge } = await import('@/lib/widgetBridge');
+      await publishWidgetBridge();
+    } catch {
+      // ignore on Android / tests
+    }
   },
 
   saveBaby: async (input) => {
@@ -249,6 +310,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       completedChoreIdsToday: [],
       prediction: null,
     });
+    syncSleepSurfacesFromStore(get());
     await setActiveBabyId(nextId);
     if (nextId) {
       await get().setActiveBaby(nextId);
@@ -260,6 +322,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLocale: async (locale) => {
     await setAppLocale(locale);
     set({ locale });
+    syncSleepSurfacesFromStore(get());
   },
 
   refreshEvents: async () => {
@@ -276,6 +339,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     ]);
     set({ events, sleepPauses, feedings, diapers, baths, wakes, dayContextTags });
     await get().recomputePrediction();
+    syncSleepSurfacesFromStore(get());
   },
 
   startSleep: async (type) => {
@@ -288,10 +352,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       startTime: new Date().toISOString(),
       endTime: null,
       extension: null,
+      onsetMethod: null,
+      settleMinutes: null,
+      settleQuality: null,
+      settleAid: null,
+      sleepPlace: null,
+      wakeManner: null,
+      wakeMood: null,
     };
     await insertSleepEvent(event);
     await get().refreshEvents();
-    queueCloudSync();
+    await flushCloudSync();
   },
 
   endSleep: async () => {
@@ -306,7 +377,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const ended: SleepEvent = { ...ongoing, endTime };
     await updateSleepEvent(ended);
     await get().refreshEvents();
-    queueCloudSync();
+    await flushCloudSync();
     return ended;
   },
 
@@ -315,7 +386,45 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!event) return;
     await updateSleepEvent({ ...event, extension });
     await get().refreshEvents();
-    queueCloudSync();
+    await flushCloudSync();
+  },
+
+  setSleepContext: async (eventId, context) => {
+    const event = get().events.find((e) => e.id === eventId);
+    if (!event) return;
+    const settleMinutes =
+      context.settleMinutes !== undefined
+        ? context.settleMinutes
+        : event.settleMinutes ?? null;
+    const settleQuality =
+      context.settleQuality !== undefined
+        ? context.settleQuality
+        : event.settleQuality ?? null;
+    const settleAid =
+      context.settleAid !== undefined ? context.settleAid : event.settleAid ?? null;
+    const sleepPlace =
+      context.sleepPlace !== undefined ? context.sleepPlace : event.sleepPlace ?? null;
+    const onsetMethod =
+      context.onsetMethod !== undefined
+        ? context.onsetMethod
+        : deriveOnsetMethodFromSettle({
+            settleAid,
+            sleepPlace,
+            onsetMethod: event.onsetMethod ?? null,
+          });
+    await updateSleepEvent({
+      ...event,
+      onsetMethod,
+      settleMinutes,
+      settleQuality,
+      settleAid,
+      sleepPlace,
+      wakeManner:
+        context.wakeManner !== undefined ? context.wakeManner : event.wakeManner ?? null,
+      wakeMood: context.wakeMood !== undefined ? context.wakeMood : event.wakeMood ?? null,
+    });
+    await get().refreshEvents();
+    await flushCloudSync();
   },
 
   pauseSleep: async () => {
@@ -329,7 +438,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     await insertSleepPause(pause);
     await get().refreshEvents();
-    queueCloudSync();
+    await flushCloudSync();
   },
 
   resumeSleep: async () => {
@@ -338,7 +447,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!ongoing || !openPause) return;
     await updateSleepPause({ ...openPause, endTime: new Date().toISOString() });
     await get().refreshEvents();
-    queueCloudSync();
+    await flushCloudSync();
   },
 
   addSleepEvent: async (input) => {
@@ -350,9 +459,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   editSleepEvent: async (event) => {
+    const previous = get().events.find((e) => e.id === event.id);
     await updateSleepEvent(event);
     await get().refreshEvents();
-    queueCloudSync();
+    // Reopening ("still asleep") must push before the next pull, or the cloud
+    // endTime wins and the edit looks like it did nothing.
+    if (previous?.endTime && !event.endTime) {
+      await flushCloudSync();
+    } else {
+      queueCloudSync();
+    }
   },
 
   removeSleepEvent: async (id) => {
@@ -582,11 +698,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!baby) {
       set({ prediction: null });
       await cancelSleepReminder();
+      syncSleepSurfacesFromStore(get());
       return;
     }
     if (isCurrentlyAsleep(events)) {
       set({ prediction: null });
       await cancelSleepReminder();
+      syncSleepSurfacesFromStore(get());
       return;
     }
     const prediction = predictNextSleep(events, wakes, baby, new Date());
@@ -596,6 +714,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       prediction.slotLabel,
       baby.name
     );
+    syncSleepSurfacesFromStore(get());
   },
 
   importCareEvents: async (preview, options) => {

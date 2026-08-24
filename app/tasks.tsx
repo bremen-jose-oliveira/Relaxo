@@ -20,7 +20,6 @@ import { useAppStore, useActiveBaby } from '@/store/useAppStore';
 import { useTranslation } from '@/lib/i18n';
 import { formatDate } from '@/lib/dateUtils';
 import { DEFAULT_TASK_REMINDER_MINUTES } from '@/lib/taskReminders';
-import { Stack } from 'expo-router';
 import type { ChoreRecurrence, DailyChore } from '@/types';
 
 const REMINDER_OPTIONS: { value: number | null; labelKey: string }[] = [
@@ -192,23 +191,18 @@ export default function TasksScreen() {
 
   if (!baby) {
     return (
-      <>
-        <Stack.Screen options={{ title: t('tabs.tasks') }} />
-        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-          <View style={styles.empty}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              {t('tasks.setupProfile')}
-            </Text>
-          </View>
-        </SafeAreaView>
-      </>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.empty}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            {t('tasks.setupProfile')}
+          </Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <>
-      <Stack.Screen options={{ title: t('tabs.tasks') }} />
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -324,7 +318,6 @@ export default function TasksScreen() {
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
-    </>
   );
 }
 

@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["AppExitModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.appexit.AppExitModule"]
+  }
+}

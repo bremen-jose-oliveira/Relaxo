@@ -306,7 +306,7 @@ export default function LogScreen() {
             await editSleepEvent({
               ...payload,
               id: editingSleep.id,
-              extension: editingSleep.extension,
+              extension: payload.extension ?? editingSleep.extension ?? null,
             });
           } else await addSleepEvent(payload);
           setSleepOpen(false);

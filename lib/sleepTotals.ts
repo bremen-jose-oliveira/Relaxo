@@ -2,6 +2,8 @@ import type { SleepEvent, SleepPause } from '@/types';
 import { minutesBetween } from '@/lib/dateUtils';
 
 const INSTANT_SLEEP_MS = 60_000;
+/** Nights this long are never real baby sleep — Napper placeholder or bad end. */
+export const ABSURD_NIGHT_SLEEP_MS = 20 * 60 * 60 * 1000;
 
 /** Napper-style instant BED_TIME row (start ≈ end) — not real sleep duration. */
 export function isInstantSleepMarker(event: Pick<SleepEvent, 'startTime' | 'endTime'>): boolean {
@@ -19,19 +21,34 @@ export function isArtificial24hNightSleep(
   const start = new Date(event.startTime);
   const end = new Date(event.endTime);
   const durationMs = end.getTime() - start.getTime();
-  return (
-    durationMs >= 23 * 60 * 60 * 1000 &&
-    durationMs <= 25 * 60 * 60 * 1000 &&
-    start.getHours() === end.getHours() &&
-    start.getMinutes() === end.getMinutes() &&
-    start.getSeconds() === end.getSeconds()
-  );
+  if (durationMs < 23 * 60 * 60 * 1000 || durationMs > 25 * 60 * 60 * 1000) {
+    return false;
+  }
+  // Same local clock time within 1 minute (Napper often uses exact 24h).
+  const startMins = start.getHours() * 60 + start.getMinutes();
+  const endMins = end.getHours() * 60 + end.getMinutes();
+  return Math.abs(startMins - endMins) <= 1;
+}
+
+/**
+ * Night rows that still need a real end (instant marker, ~24h Napper placeholder,
+ * or any absurd ≥20h duration). Used by import stitching.
+ */
+export function needsNapperBedtimeStitch(
+  event: Pick<SleepEvent, 'type' | 'startTime' | 'endTime'>
+): boolean {
+  if (event.type !== 'night' || !event.endTime) return false;
+  if (isInstantSleepMarker(event) || isArtificial24hNightSleep(event)) return true;
+  const durationMs =
+    new Date(event.endTime).getTime() - new Date(event.startTime).getTime();
+  return durationMs >= ABSURD_NIGHT_SLEEP_MS;
 }
 
 export function contributesToSleepTotals(event: SleepEvent): boolean {
   if (!event.endTime) return false;
   if (isInstantSleepMarker(event)) return false;
   if (isArtificial24hNightSleep(event)) return false;
+  if (needsNapperBedtimeStitch(event)) return false;
   return true;
 }
 

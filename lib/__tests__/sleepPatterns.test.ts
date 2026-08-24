@@ -131,18 +131,20 @@ describe('sleepPatterns', () => {
     }
 
     const schedule = getTypicalSleepSchedule(events, wakes, now);
-    expect(schedule).toHaveLength(4);
+    expect(schedule).toHaveLength(5);
     expect(schedule.map((s) => s.slotLabel)).toEqual([
+      'Wake up',
       '1st nap',
       '2nd nap',
       '3rd nap',
       'bedtime',
     ]);
-    expect(schedule[0]!.typicalTime.getHours()).toBe(10);
-    expect(schedule[1]!.typicalTime.getHours()).toBe(13);
-    expect(schedule[2]!.typicalTime.getHours()).toBe(16);
-    expect(schedule[2]!.typicalTime.getMinutes()).toBe(30);
-    expect(schedule[3]!.typicalTime.getHours()).toBe(19);
+    expect(schedule[0]!.typicalTime.getHours()).toBe(7);
+    expect(schedule[1]!.typicalTime.getHours()).toBe(10);
+    expect(schedule[2]!.typicalTime.getHours()).toBe(13);
+    expect(schedule[3]!.typicalTime.getHours()).toBe(16);
+    expect(schedule[3]!.typicalTime.getMinutes()).toBe(30);
+    expect(schedule[4]!.typicalTime.getHours()).toBe(19);
   });
 
   it('includes evening naps beyond 4 when logged as naps', () => {
@@ -162,6 +164,7 @@ describe('sleepPatterns', () => {
 
     const schedule = getTypicalSleepSchedule(events, wakes, now, 4);
     expect(schedule.map((s) => s.slotLabel)).toEqual([
+      'Wake up',
       '1st nap',
       '2nd nap',
       '3rd nap',
@@ -169,9 +172,10 @@ describe('sleepPatterns', () => {
       '5th nap',
       'bedtime',
     ]);
-    expect(schedule[4]!.typicalTime.getHours()).toBe(18);
-    expect(schedule[5]!.typicalTime.getHours()).toBe(20);
-    expect(schedule[5]!.typicalTime.getMinutes()).toBe(30);
+    expect(schedule[0]!.typicalTime.getHours()).toBe(7);
+    expect(schedule[5]!.typicalTime.getHours()).toBe(18);
+    expect(schedule[6]!.typicalTime.getHours()).toBe(20);
+    expect(schedule[6]!.typicalTime.getMinutes()).toBe(30);
   });
 
   it(`usual schedule defaults to ${USUAL_TIMES_LOOKBACK_DAYS}-day lookback`, () => {
@@ -181,5 +185,65 @@ describe('sleepPatterns', () => {
     const wakes = [makeMorningWake(-30, 7, 0)];
     const schedule = getTypicalSleepSchedule(events, wakes, now);
     expect(schedule).toHaveLength(0);
+  });
+
+  it('sorts usual nap times chronologically when ordinal medians are out of order', () => {
+    const now = new Date('2025-06-20T12:00:00');
+    const events: SleepEvent[] = [];
+    const wakes: WakeEvent[] = [];
+
+    // Days with 5 naps ending late (~19:22)
+    for (const day of [-1, -2, -3]) {
+      wakes.push(makeMorningWake(day, 7, 0));
+      events.push(makeNap(day, 9, 0, 40));
+      events.push(makeNap(day, 11, 0, 40));
+      events.push(makeNap(day, 13, 0, 40));
+      events.push(makeNap(day, 15, 0, 40));
+      events.push(makeNap(day, 19, 22, 40));
+      events.push(makeNight(day, 21, 0, 600));
+    }
+    // Days with 6 naps where the 6th is earlier (~18:44)
+    for (const day of [-4, -5, -6]) {
+      wakes.push(makeMorningWake(day, 7, 0));
+      events.push(makeNap(day, 8, 30, 35));
+      events.push(makeNap(day, 10, 30, 35));
+      events.push(makeNap(day, 12, 30, 35));
+      events.push(makeNap(day, 14, 30, 35));
+      events.push(makeNap(day, 16, 30, 35));
+      events.push(makeNap(day, 18, 44, 35));
+      events.push(makeNight(day, 21, 0, 600));
+    }
+
+    const schedule = getTypicalSleepSchedule(events, wakes, now);
+    const napRows = schedule.filter((s) => typeof s.slot === 'number');
+    for (let i = 1; i < napRows.length; i++) {
+      expect(napRows[i]!.typicalTime.getTime()).toBeGreaterThanOrEqual(
+        napRows[i - 1]!.typicalTime.getTime()
+      );
+    }
+  });
+
+  it('treats very long naps as bedtime for usual times', () => {
+    const now = new Date('2025-06-20T12:00:00');
+    const events: SleepEvent[] = [];
+    const wakes: WakeEvent[] = [];
+
+    for (const day of [-1, -2, -3]) {
+      wakes.push(makeMorningWake(day, 7, 0));
+      events.push(makeNap(day, 10, 0, 60));
+      events.push(makeNap(day, 13, 0, 60));
+      // Mislabeled night (~10h) should not become "3rd nap"
+      events.push(makeNap(day, 19, 0, 605));
+    }
+
+    const schedule = getTypicalSleepSchedule(events, wakes, now);
+    expect(schedule.map((s) => s.slotLabel)).toEqual([
+      'Wake up',
+      '1st nap',
+      '2nd nap',
+      'bedtime',
+    ]);
+    expect(schedule[0]!.typicalTime.getHours()).toBe(7);
+    expect(schedule[3]!.typicalTime.getHours()).toBe(19);
   });
 });

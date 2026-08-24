@@ -2,7 +2,7 @@
   "expo": {
     "name": "Relaxo",
     "slug": "relaxo",
-    "version": "1.0.3",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "relaxo",
@@ -10,6 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.joseoliv.relaxo",
+      "appleTeamId": "YJYA3WJYT5",
       "usesAppleSignIn": true,
       "infoPlist": {
         "UIBackgroundModes": [
@@ -21,7 +22,7 @@
     "android": {
       "package": "com.joseoliv.relaxo",
       "adaptiveIcon": {
-        "backgroundColor": "#7C9A92",
+        "backgroundColor": "#0A122E",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -49,21 +50,45 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#F8F6F3"
+          "backgroundColor": "#0A122E"
         }
       ],
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/icon.png",
-          "color": "#7C9A92"
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#6B7FBF"
         }
       ],
       "@react-native-community/datetimepicker",
       "expo-sharing",
       "expo-localization",
       "expo-secure-store",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.joseoliv.relaxo.widgets",
+          "groupIdentifier": "group.com.joseoliv.relaxo",
+          "widgets": [
+            {
+              "name": "SleepHomeWidget",
+              "displayName": "Relaxo Sleep",
+              "description": "See sleep status and start or end a nap from Home Screen or Lock Screen.",
+              "ios": {
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium",
+                  "accessoryCircular",
+                  "accessoryRectangular",
+                  "accessoryInline"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true
@@ -76,11 +101,46 @@
         }
       },
       "eas": {
-        "projectId": "8976219b-9c26-4481-ac57-23dc6496c341"
+        "projectId": "8976219b-9c26-4481-ac57-23dc6496c341",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "ExpoWidgetsTarget",
+                  "bundleIdentifier": "com.joseoliv.relaxo.widgets",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.joseoliv.relaxo"
+                    ]
+                  }
+                },
+                {
+                  "targetName": "RelaxoWatch",
+                  "bundleIdentifier": "com.joseoliv.relaxo.watch",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.joseoliv.relaxo"
+                    ]
+                  }
+                },
+                {
+                  "targetName": "RelaxoWatchWidget",
+                  "bundleIdentifier": "com.joseoliv.relaxo.watch.widget",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.joseoliv.relaxo"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
       }
     },
     "owner": "jose_oliv",
-    "runtimeVersion": "1.0.3",
+    "runtimeVersion": "1.1.0",
     "updates": {
       "url": "https://u.expo.dev/8976219b-9c26-4481-ac57-23dc6496c341",
       "checkAutomatically": "ON_LOAD",

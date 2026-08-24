@@ -7,6 +7,11 @@ import {
   getWakeWindowsBySlotForDay,
 } from '@/lib/predictNextSleep';
 import {
+  getMorningWakeMinutesForDay,
+  isLongNapLikelyNight,
+} from '@/lib/sleepPatterns';
+import { resolveSettleFields } from '@/lib/sleepSettle';
+import {
   contributesToSleepTotals,
   groupPausesByEventId,
   sleepIntervalsMinusPauses,
@@ -56,7 +61,23 @@ export type SleepStats = {
   avgWakeWindowMinutes: number | null;
   extensionSuccessPercent: number | null;
   avgDaytimeSleepMinutes: number | null;
+  /** Pause-aware average duration of completed night sleeps ending in the window. */
+  avgNightSleepMinutes: number | null;
+  /** Median morning wake time (minutes from midnight). */
+  typicalMorningWakeMinutes: number | null;
+  /** Of sleeps with wake manner set: % that were self-wakes. */
+  selfWakePercent: number | null;
+  /** Of sleeps with place/onset set: % that slept in crib/bed. */
+  cribOnsetPercent: number | null;
+  /** Of sleeps with settle quality set: % calm. */
+  calmSettlePercent: number | null;
+  /** Average settle minutes when recorded. */
+  avgSettleMinutes: number | null;
+  /** Of sleeps with wake mood set: % happy. */
+  happyWakePercent: number | null;
 };
+
+export type StatsLookbackDays = 7 | 14 | 30;
 
 export type AgeNorms = {
   typicalNaps: number;
@@ -74,6 +95,8 @@ function napDurationMinutes(
   pausesByEventId: Map<string, SleepPause[]>
 ): number | null {
   if (event.type !== 'nap' || !contributesToSleepTotals(event)) return null;
+  // Overnight / multi-hour "naps" are night sleep for stats (avoids 20h+ longest nap).
+  if (isLongNapLikelyNight(event)) return null;
   const chunks = sleepIntervalsMinusPauses(event, pausesByEventId.get(event.id) ?? []);
   const minutes = totalMinutesFromIntervals(chunks);
   return minutes > 0 ? minutes : null;
@@ -86,6 +109,7 @@ function completedNapsInRange(
 ): SleepEvent[] {
   return events.filter((e) => {
     if (e.type !== 'nap' || !e.endTime) return false;
+    if (isLongNapLikelyNight(e)) return false;
     const start = new Date(e.startTime).getTime();
     return start >= rangeStart.getTime() && start < rangeEnd.getTime();
   });
@@ -283,12 +307,47 @@ export function formatMinutesCompact(totalMinutes: number): string {
   return `${h}h ${m}m`;
 }
 
+function nightDurationMinutes(
+  event: SleepEvent,
+  pausesByEventId: Map<string, SleepPause[]>
+): number | null {
+  if (!contributesToSleepTotals(event)) return null;
+  const chunks = sleepIntervalsMinusPauses(event, pausesByEventId.get(event.id) ?? []);
+  const minutes = totalMinutesFromIntervals(chunks);
+  return minutes > 0 ? Math.round(minutes) : null;
+}
+
+/** Completed night sleeps (or long naps treated as night) that ended in [rangeStart, rangeEnd). */
+function completedNightsEndingInRange(
+  events: SleepEvent[],
+  rangeStart: Date,
+  rangeEnd: Date
+): SleepEvent[] {
+  return events.filter((e) => {
+    if (!e.endTime) return false;
+    const isNight = e.type === 'night' || isLongNapLikelyNight(e);
+    if (!isNight) return false;
+    const end = new Date(e.endTime).getTime();
+    return end >= rangeStart.getTime() && end < rangeEnd.getTime();
+  });
+}
+
+function medianMinutes(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
+  }
+  return Math.round(sorted[mid]!);
+}
+
 export function getSleepStats(
   events: SleepEvent[],
   pauses: SleepPause[],
   wakes: WakeEvent[],
   now: Date,
-  lookbackDays = 30
+  lookbackDays: StatsLookbackDays | number = 30
 ): SleepStats {
   const todayStart = startOfDay(now);
   const rangeStart = addDays(todayStart, -(lookbackDays - 1));
@@ -300,9 +359,15 @@ export function getSleepStats(
     .map((e) => napDurationMinutes(e, pausesByEventId))
     .filter((m): m is number => m !== null);
 
+  const nights = completedNightsEndingInRange(events, rangeStart, rangeEnd);
+  const nightDurations = nights
+    .map((e) => nightDurationMinutes(e, pausesByEventId))
+    .filter((m): m is number => m !== null);
+
   const daysWithNaps = new Set(naps.map((e) => formatDateKey(new Date(e.startTime))));
   const daytimeTotals: number[] = [];
   const wakeWindows: number[] = [];
+  const morningWakeMinutes: number[] = [];
 
   for (let i = 0; i < lookbackDays; i++) {
     const day = addDays(todayStart, -i);
@@ -313,12 +378,37 @@ export function getSleepStats(
     if (insights.avgWakeWindowMinutes != null) {
       wakeWindows.push(insights.avgWakeWindowMinutes);
     }
+    const wakeMinutes = getMorningWakeMinutesForDay(events, wakes, day);
+    if (wakeMinutes != null) {
+      morningWakeMinutes.push(wakeMinutes);
+    }
   }
 
   const withExtensionAnswer = naps.filter((e) => e.extension != null);
   const extended = withExtensionAnswer.filter(
     (e) => e.extension != null && EXTENDED_VALUES.includes(e.extension)
   );
+
+  const completedInRange = events.filter((e) => {
+    if (!e.endTime) return false;
+    const start = new Date(e.startTime).getTime();
+    return start >= rangeStart.getTime() && start < rangeEnd.getTime();
+  });
+  const withWakeManner = completedInRange.filter((e) => e.wakeManner != null);
+  const selfWakes = withWakeManner.filter((e) => e.wakeManner === 'self');
+  const settleResolved = completedInRange.map((e) => ({
+    event: e,
+    settle: resolveSettleFields(e),
+  }));
+  const withPlace = settleResolved.filter((r) => r.settle.sleepPlace != null);
+  const cribPlace = withPlace.filter((r) => r.settle.sleepPlace === 'crib');
+  const withQuality = settleResolved.filter((r) => r.settle.settleQuality != null);
+  const calmSettles = withQuality.filter((r) => r.settle.settleQuality === 'calm');
+  const settleMinuteValues = settleResolved
+    .map((r) => r.settle.settleMinutes)
+    .filter((m): m is number => m != null && Number.isFinite(m));
+  const withMood = completedInRange.filter((e) => e.wakeMood != null);
+  const happyWakes = withMood.filter((e) => e.wakeMood === 'happy');
 
   return {
     avgNapMinutes: average(durations),
@@ -333,6 +423,25 @@ export function getSleepStats(
         ? Math.round((extended.length / withExtensionAnswer.length) * 100)
         : null,
     avgDaytimeSleepMinutes: average(daytimeTotals),
+    avgNightSleepMinutes: average(nightDurations),
+    typicalMorningWakeMinutes: medianMinutes(morningWakeMinutes),
+    selfWakePercent:
+      withWakeManner.length > 0
+        ? Math.round((selfWakes.length / withWakeManner.length) * 100)
+        : null,
+    cribOnsetPercent:
+      withPlace.length > 0
+        ? Math.round((cribPlace.length / withPlace.length) * 100)
+        : null,
+    calmSettlePercent:
+      withQuality.length > 0
+        ? Math.round((calmSettles.length / withQuality.length) * 100)
+        : null,
+    avgSettleMinutes: average(settleMinuteValues),
+    happyWakePercent:
+      withMood.length > 0
+        ? Math.round((happyWakes.length / withMood.length) * 100)
+        : null,
   };
 }
 

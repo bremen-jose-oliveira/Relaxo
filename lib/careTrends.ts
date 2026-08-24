@@ -80,6 +80,13 @@ export function getFeedingTrend(
   return result;
 }
 
+/** Average daily count across a trend series (includes zero days). */
+export function averageDailyCount(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sum = values.reduce((a, b) => a + b, 0);
+  return Math.round((sum / values.length) * 10) / 10;
+}
+
 export function getDiaperTrend(
   events: DiaperEvent[],
   days: number,

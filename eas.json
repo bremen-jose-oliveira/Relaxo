@@ -8,23 +8,30 @@
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "autoIncrement": true
       }
     },
     "preview": {
       "distribution": "internal",
       "channel": "preview",
       "ios": {
-        "buildConfiguration": "Release"
+        "buildConfiguration": "Release",
+        "autoIncrement": true
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "autoIncrement": true
       }
     },
     "production": {
       "channel": "production",
       "ios": {
-        "buildConfiguration": "Release"
+        "buildConfiguration": "Release",
+        "autoIncrement": true
+      },
+      "android": {
+        "autoIncrement": true
       }
     }
   },

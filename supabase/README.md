@@ -7,13 +7,16 @@
 
 ## 2. Apply the SQL schema
 
+If `npm` is broken in your shell, use `node` directly (same scripts).
+
 ### Schema health (no DB password)
 
 ```bash
-npm run db:supabase:status
+node scripts/supabase-status.mjs
+# or: npm run db:supabase:status
 ```
 
-Uses `EXPO_PUBLIC_SUPABASE_URL` + publishable key only.
+Uses `EXPO_PUBLIC_SUPABASE_URL` + publishable key only. Checks **all** sync tables and required columns (sleep settle fields, chores, day tags, etc.).
 
 ### Apply migrations from the CLI (for ongoing schema work)
 
@@ -35,44 +38,55 @@ SUPABASE_DB_PASSWORD=your-database-password
 SUPABASE_DB_REGION=eu-central-1
 ```
 
-(`SUPABASE_DB_REGION` is the middle part of the pooler host: `aws-0-<region>.pooler.supabase.com`. Password is set at project creation; reset it in Database settings if forgotten.)
-
 Then:
 
 ```bash
-npm run db:supabase:fresh    # empty project: full schema.sql
-npm run db:supabase          # apply pending supabase/NNNN_*.sql
-npm run db:supabase:new -- add_short_name   # scaffold next change
+node scripts/supabase-migrate.mjs --fresh   # empty project: full schema.sql
+node scripts/supabase-migrate.mjs           # apply pending supabase/NNNN_*.sql
+node scripts/supabase-new-migration.mjs add_short_name
 ```
 
-### SQL Editor fallback
+### SQL Editor fallback (no npm / no DB URL)
 
-Paste and run `supabase/schema.sql`, then any pending `supabase/NNNN_*.sql` files in order.
+1. **New project:** paste and run [`schema.sql`](./schema.sql) once.
+2. **Existing project:** run any pending `NNNN_*.sql` files in numeric order (see table below).
+3. Re-check: `node scripts/supabase-status.mjs`
 
 ### When you change the cloud schema
 
-Local phone DB stays on Drizzle (`npm run db:generate`). Cloud changes are SQL files:
+Local phone DB stays on Drizzle (`npm run db:generate` / `npx drizzle-kit generate`). Cloud changes are SQL files:
 
 ```bash
-npm run db:supabase:new -- add_short_name
+node scripts/supabase-new-migration.mjs add_short_name
 # edit the new supabase/NNNN_….sql
 # mirror the same change into supabase/schema.sql
-npm run db:supabase
+node scripts/supabase-migrate.mjs
 ```
 
 ### Migration files
 
 | File | Purpose |
 |------|---------|
-| [`schema.sql`](./schema.sql) | Full baseline for **new** projects (`db:supabase:fresh`) |
+| [`schema.sql`](./schema.sql) | Full baseline for **new** projects (all sync tables, settle columns, preview pointer, realtime) |
 | [`0011_sleep_insights.sql`](./0011_sleep_insights.sql) | Nap extension + day context tags |
 | [`0012_task_reminders.sql`](./0012_task_reminders.sql) | Chore reminder minutes |
 | [`0013_household_select_creator.sql`](./0013_household_select_creator.sql) | Creator can read household |
-| [`0014_join_household_by_invite.sql`](./0014_join_household_by_invite.sql) | Partner join by invite code + ensure `sleep_events` |
+| [`0014_join_household_by_invite.sql`](./0014_join_household_by_invite.sql) | Partner join by invite code |
+| [`0016_sync_prerequisites.sql`](./0016_sync_prerequisites.sql) | Chore completions + day tags safety |
+| [`0017_latest_preview_build.sql`](./0017_latest_preview_build.sql) | Preview install pointer table |
+| [`0018_safe_residual_patches.sql`](./0018_safe_residual_patches.sql) | Optional leftover column/RLS patches |
+| [`0019_dedupe_sync_rows.sql`](./0019_dedupe_sync_rows.sql) | Soft-delete duplicate day tags / babies diagnostics |
+| [`0020_dedupe_exact_events.sql`](./0020_dedupe_exact_events.sql) | Soft-delete exact duplicate care events |
+| [`0021_sleep_context.sql`](./0021_sleep_context.sql) | `onset_method` / wake manner / mood |
+| [`0022_realtime_household.sql`](./0022_realtime_household.sql) | Realtime publication for partner pull |
+| [`0023_sleep_settle.sql`](./0023_sleep_settle.sql) | Settle minutes / quality / aid / place |
+| [`0024_day_context_tags_partial_unique.sql`](./0024_day_context_tags_partial_unique.sql) | Live-only unique index for day tags |
 
 Applied versions are stored in `public.relaxo_schema_migrations`.
 
-Without `0014`, a family member looking up an invite code always fails (RLS hides households until they are already a member), and sync may error if `sleep_events` was never created.
+**Tables the app syncs:** `babies`, `sleep_events`, `sleep_pauses`, `feeding_events`, `diaper_events`, `bath_events`, `wake_events`, `daily_chores`, `daily_chore_completions`, `day_context_tags` (+ auth: `households`, `household_members`, `profiles`).
+
+Without `0014` / join RPC, a family member looking up an invite code always fails (RLS hides households until they are already a member).
 
 ## 3. Enable Sign in with Apple
 
@@ -80,10 +94,10 @@ Without `0014`, a family member looking up an invite code always fails (RLS hide
    - App ID `com.joseoliv.relaxo` → enable **Sign In with Apple**  
    - Create a **Services ID** (e.g. `com.joseoliv.relaxo.auth`) if Supabase asks for OAuth secret  
    - Create a **Key** for Sign in with Apple and download the `.p8` (only once — keep it safe)
-2. Generate the Supabase **Secret Key** JWT from your `.p8` (local script — no dashboard generator needed):
+2. Generate the Supabase **Secret Key** JWT from your `.p8`:
 
 ```bash
-npm run generate:apple-secret -- \
+node scripts/generate-apple-secret.mjs \
   --team-id=YOUR_TEAM_ID \
   --key-id=YOUR_KEY_ID \
   --client-id=com.joseoliv.relaxo.auth \
@@ -96,7 +110,7 @@ Paste the printed JWT into Supabase → **Authentication → Providers → Apple
    - **Client IDs**: `com.joseoliv.relaxo` (and Services ID if you created one)  
    - **Secret Key**: the JWT from the script above
 
-Docs: [Supabase Apple login](https://supabase.com/docs/guides/auth/social-login/auth-apple)
+Docs: [Supabase Apple login](https://docs.supabase.com/guides/auth/social-login/auth-apple)
 
 ## 4. App env
 
@@ -105,7 +119,7 @@ Copy `.env.example` → `.env`:
 ```
 EXPO_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-# For npm run db:supabase (pick one):
+# For node scripts/supabase-migrate.mjs (pick one):
 SUPABASE_DB_URL=postgresql://postgres.xxxx:…@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
 # or: SUPABASE_DB_PASSWORD=…  and  SUPABASE_DB_REGION=eu-central-1
 ```
@@ -113,14 +127,9 @@ SUPABASE_DB_URL=postgresql://postgres.xxxx:…@aws-0-eu-central-1.pooler.supabas
 Get URL + publishable key from Supabase → **Project Settings → API**.  
 For CLI migrations: **Database → Connect → Session mode** URI (or password + region).
 
-Local `.env` is for `npx expo start` and `npm run db:supabase` only. **EAS cloud builds do not upload `.env`** — set the app keys as EAS project env vars (preview / production / development), e.g.:
+Local `.env` is for Expo / these scripts only. **EAS cloud builds do not upload `.env`** — set the app keys as EAS project env vars.
 
-```bash
-eas env:create --name EXPO_PUBLIC_SUPABASE_URL --value "https://xxxx.supabase.co" --environment preview --visibility plaintext --non-interactive
-eas env:create --name EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY --value "sb_publishable_..." --environment preview --visibility sensitive --non-interactive
-```
-
-Without the publishable keys, Profile shows “Cloud sync not configured” and hides Sign in with Apple.  
+Without the publishable keys, Settings shows “Cloud sync not configured” and hides Sign in with Apple.  
 `SUPABASE_DB_URL` / `SUPABASE_DB_PASSWORD` stay on your machine only — never in the app binary.
 
 ## 5. Native rebuild (required)
@@ -129,7 +138,7 @@ Sign in with Apple needs a new native build (not OTA-only):
 
 ```bash
 eas build --platform ios --profile preview
-npm run sync:preview-build
+node scripts/sync-preview-build.mjs
 eas update --channel preview
 ```
 
@@ -139,7 +148,8 @@ eas update --channel preview
 - Sign in creates a **household** + **invite code**
 - **Sync now** pushes local rows, then pulls household rows
 - Partner device: Sign in → enter invite code → Sync now
+- Realtime (0022 / schema) triggers a silent pull when the partner changes data
 
 ## Partner invite
 
-Owner shares the 8-character invite code from Profile → Cloud sync.
+Owner shares the 8-character invite code from Settings → Cloud sync.
