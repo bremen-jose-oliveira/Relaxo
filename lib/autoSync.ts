@@ -17,6 +17,9 @@ const PULL_INTERVAL_MS = 45_000;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let pullInterval: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
+/** Resolves when the current flush finishes (callers can await). */
+let inFlightDone: Promise<void> | null = null;
+let resolveInFlightDone: (() => void) | null = null;
 /** Local writes still need a sync attempt (survives auth-not-ready skips). */
 let pending = false;
 /** Partner pull requested (foreground / interval) — not a local dirty flag. */
@@ -77,7 +80,17 @@ export async function flushHouseholdAutoSyncNow(): Promise<void> {
     clearTimeout(timer);
     timer = null;
   }
+  // Wait through any in-flight sync, then run so this write is included in a push.
+  if (inFlightDone) {
+    await inFlightDone;
+  }
   await flushHouseholdAutoSync();
+  if (pending || queued || pullRequested) {
+    if (inFlightDone) {
+      await inFlightDone;
+    }
+    await flushHouseholdAutoSync();
+  }
 }
 
 async function flushHouseholdAutoSync(): Promise<void> {
@@ -123,6 +136,9 @@ async function flushHouseholdAutoSync(): Promise<void> {
   }
 
   inFlight = true;
+  inFlightDone = new Promise<void>((resolve) => {
+    resolveInFlightDone = resolve;
+  });
   queued = false;
   const wasPull = pullRequested;
   try {
@@ -153,6 +169,10 @@ async function flushHouseholdAutoSync(): Promise<void> {
     }
   } finally {
     inFlight = false;
+    const resolve = resolveInFlightDone;
+    resolveInFlightDone = null;
+    inFlightDone = null;
+    resolve?.();
     if (queued) {
       scheduleHouseholdAutoSync({ urgent: true });
     }

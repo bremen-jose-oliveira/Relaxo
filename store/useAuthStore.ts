@@ -40,6 +40,7 @@ type AuthState = {
   syncNow: (opts?: { silent?: boolean }) => Promise<SyncResult>;
   joinWithCode: (code: string) => Promise<{ ok: boolean; error?: string }>;
   refreshSyncMeta: () => Promise<void>;
+  deleteAccount: () => Promise<{ ok: boolean; error?: string }>;
 };
 
 let unsubAuth: (() => void) | null = null;
@@ -184,12 +185,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   syncNow: async (opts) => {
     const silent = opts?.silent === true;
     if (!silent) set({ isSyncing: true, lastSyncError: null });
-    else set({ lastSyncError: null });
     try {
       const result = await syncHouseholdData();
       if (!result.ok) {
         set({ lastSyncError: result.error ?? 'Sync failed.' });
       } else {
+        set({ lastSyncError: null });
         await get().refreshSyncMeta();
       }
       return result;
@@ -215,6 +216,46 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return { ok: false, error: msg };
       }
       await get().refreshSyncMeta();
+      return { ok: true };
+    } finally {
+      set({ isSyncing: false });
+    }
+  },
+
+  deleteAccount: async () => {
+    set({ isSyncing: true, lastSyncError: null });
+    try {
+      const { deleteCloudAccountAndWipeLocal } = await import('@/lib/deleteAccount');
+      const result = await deleteCloudAccountAndWipeLocal();
+      if (!result.ok) {
+        set({ lastSyncError: result.error });
+        return { ok: false, error: result.error };
+      }
+      set({
+        session: null,
+        user: null,
+        householdId: null,
+        inviteCode: null,
+        householdName: null,
+        lastSyncedAt: null,
+        lastSyncError: null,
+      });
+      const { useAppStore } = await import('@/store/useAppStore');
+      useAppStore.setState({
+        babies: [],
+        activeBabyId: null,
+        events: [],
+        sleepPauses: [],
+        feedings: [],
+        diapers: [],
+        baths: [],
+        wakes: [],
+        dayContextTags: [],
+        dailyChores: [],
+        completedChoreIdsToday: [],
+        prediction: null,
+        onboardingCompleted: true,
+      });
       return { ok: true };
     } finally {
       set({ isSyncing: false });

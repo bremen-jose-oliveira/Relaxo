@@ -23,6 +23,8 @@ export type SleepHomeWidgetReadinessTone = WakeReadiness | 'none';
 export type SleepHomeWidgetProps = {
   title: string;
   subtitle: string;
+  /** Stable baby name (title changes while asleep). */
+  babyName: string;
   paused: boolean;
   asleep: boolean;
   statusTone: SleepHomeWidgetStatusTone;
@@ -193,6 +195,7 @@ export function buildSleepHomeWidgetProps(input: {
 
     return {
       title: babyName,
+      babyName,
       subtitle: awake.subtitle,
       paused: false,
       asleep: false,
@@ -235,6 +238,7 @@ export function buildSleepHomeWidgetProps(input: {
 
   return {
     title: paused ? labels.labelBabyAwake : typeLabel,
+    babyName,
     subtitle: paused ? labels.labelAwakeSince : labels.labelSleepingFor,
     paused,
     asleep: true,

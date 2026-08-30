@@ -102,6 +102,20 @@ export async function drainWidgetPendingQueue(): Promise<number> {
     }
   }
 
+  // Always pull-before-push so partner/widget cloud writes heal into SQLite + surfaces.
+  try {
+    const { flushHouseholdAutoSyncNow } = await import('@/lib/autoSync');
+    await flushHouseholdAutoSyncNow();
+    const fresh = useAppStore.getState();
+    if (fresh.activeBabyId) {
+      await fresh.refreshEvents();
+    }
+    const { publishWidgetBridge } = await import('@/lib/widgetBridge');
+    await publishWidgetBridge();
+  } catch (error) {
+    console.warn('[widgetPendingDrain] heal flush failed', error);
+  }
+
   return applied;
 }
 

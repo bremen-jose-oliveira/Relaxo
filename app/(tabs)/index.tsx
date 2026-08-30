@@ -56,6 +56,7 @@ import type {
   NapExtension,
 } from '@/types';
 import type { SleepContextSelection } from '@/components/SleepContextSheet';
+import { useAuthStore } from '@/store/useAuthStore';
 
 export default function HomeScreen() {
   const scheme = useColorScheme() ?? 'light';
@@ -78,6 +79,10 @@ export default function HomeScreen() {
   const sleepPauses = useAppStore((s) => s.sleepPauses);
   const events = useAppStore((s) => s.events);
   const wakes = useAppStore((s) => s.wakes);
+  const householdId = useAuthStore((s) => s.householdId);
+  const lastSyncedAt = useAuthStore((s) => s.lastSyncedAt);
+  const lastSyncError = useAuthStore((s) => s.lastSyncError);
+  const isSyncing = useAuthStore((s) => s.isSyncing);
   const dayContextTags = useAppStore((s) => s.dayContextTags);
   const toggleDayTag = useAppStore((s) => s.toggleDayTag);
 
@@ -189,6 +194,13 @@ export default function HomeScreen() {
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
             {t('home.welcomeSub')}
           </Text>
+          <Text
+            style={[
+              styles.emptyText,
+              { color: colors.textSecondary, marginTop: spacing.md, fontStyle: 'italic' },
+            ]}>
+            {t('legal.medicalDisclaimer')}
+          </Text>
           <BigButton
             title={t('home.setupProfile')}
             style={{ marginTop: spacing.xl, width: '100%' }}
@@ -241,6 +253,19 @@ export default function HomeScreen() {
             <Text style={[styles.ageLine, { color: colors.textSecondary }]}>
               {t('home.ageLabel', { age: ageLabel })}
             </Text>
+            {householdId ? (
+              <Text style={[styles.syncTrust, { color: lastSyncError ? colors.danger : colors.textSecondary }]}>
+                {isSyncing
+                  ? t('profile.syncStatusSyncing')
+                  : lastSyncError
+                    ? t('profile.syncStatusFailed')
+                    : lastSyncedAt
+                      ? t('profile.syncStatusOk', {
+                          time: formatTime(new Date(lastSyncedAt)),
+                        })
+                      : t('profile.syncStatusNever')}
+              </Text>
+            ) : null}
 
             <View style={[styles.statusPill, { backgroundColor: statusColor + '44' }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -523,6 +548,11 @@ const styles = StyleSheet.create({
   ageLine: {
     fontSize: 14,
     marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  syncTrust: {
+    fontSize: 12,
+    marginBottom: spacing.sm,
     textAlign: 'center',
   },
   statusPill: {

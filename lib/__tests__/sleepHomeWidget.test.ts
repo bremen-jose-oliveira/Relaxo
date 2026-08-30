@@ -22,6 +22,7 @@ describe('buildSleepHomeWidgetProps', () => {
       babyName: 'Leo',
     });
     expect(props.title).toBe('Leo');
+    expect(props.babyName).toBe('Leo');
     expect(props.asleep).toBe(false);
     expect(props.statusTone).toBe('awake');
     expect(props.primaryTarget).toBe('start-nap');

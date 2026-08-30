@@ -18,6 +18,8 @@ export const appSettings = sqliteTable('app_settings', {
     .notNull()
     .default('system'),
   activeBabyId: text('active_baby_id'),
+  /** 0/1 — first-run onboarding finished (or skipped). */
+  onboardingCompleted: integer('onboarding_completed').notNull().default(0),
 });
 
 export const sleepEvents = sqliteTable(

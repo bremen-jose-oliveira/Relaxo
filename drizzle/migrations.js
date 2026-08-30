@@ -19,6 +19,7 @@ import m0014 from './0014_active_baby.sql';
 import m0015 from './0015_pending_sync_deletes.sql';
 import m0016 from './0016_sleep_context.sql';
 import m0017 from './0017_sleep_settle.sql';
+import m0018 from './0018_onboarding.sql';
 
 export default {
   journal,
@@ -41,5 +42,6 @@ export default {
     m0015,
     m0016,
     m0017,
+    m0018,
   },
 };

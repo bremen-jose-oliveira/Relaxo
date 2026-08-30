@@ -1076,3 +1076,62 @@ export async function toggleDayContextTag(
   }
   return getDayContextTagsForDate(babyId, dateKey);
 }
+
+export async function getOnboardingCompleted(): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.id, DEFAULT_SETTINGS_ID))
+    .limit(1);
+  return Number(rows[0]?.onboardingCompleted ?? 0) === 1;
+}
+
+export async function setOnboardingCompleted(done: boolean): Promise<void> {
+  const db = await getDb();
+  await db
+    .insert(appSettings)
+    .values({
+      id: DEFAULT_SETTINGS_ID,
+      locale: "system",
+      onboardingCompleted: done ? 1 : 0,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { onboardingCompleted: done ? 1 : 0 },
+    });
+}
+
+/** Wipe all local care data and reset settings (keeps DB file + schema). */
+export async function wipeAllLocalCareData(): Promise<void> {
+  const db = await getDb();
+  const { syncState, pendingSyncDeletes } = schema;
+
+  await db.delete(sleepPauses);
+  await db.delete(sleepEvents);
+  await db.delete(feedingEvents);
+  await db.delete(diaperEvents);
+  await db.delete(bathEvents);
+  await db.delete(wakeEvents);
+  await db.delete(dayContextTags);
+  await db.delete(dailyChoreCompletions);
+  await db.delete(dailyChores);
+  await db.delete(babies);
+  await db.delete(pendingSyncDeletes);
+  await db.delete(syncState);
+  await db.delete(appSettings);
+
+  await db.insert(appSettings).values({
+    id: DEFAULT_SETTINGS_ID,
+    locale: "system",
+    activeBabyId: null,
+    onboardingCompleted: 1,
+  });
+  await db.insert(syncState).values({
+    id: "default",
+    householdId: null,
+    inviteCode: null,
+    householdName: null,
+    lastSyncedAt: null,
+  });
+}

@@ -29,6 +29,8 @@ import {
   setAppLocale,
   getActiveBabyId,
   setActiveBabyId,
+  getOnboardingCompleted,
+  setOnboardingCompleted,
   deleteBaby,
   insertBathEvent,
   insertDailyChore,
@@ -133,8 +135,11 @@ type AppState = {
   isLoading: boolean;
   isInitialized: boolean;
   locale: AppLocale;
+  onboardingCompleted: boolean;
 
   initialize: () => Promise<void>;
+  setOnboardingCompleted: (done: boolean) => Promise<void>;
+  wipeLocalData: () => Promise<void>;
   setActiveBaby: (id: string) => Promise<void>;
   saveBaby: (baby: Omit<Baby, 'id'> & { id?: string; napGoal?: Baby['napGoal']; trackFeedingDuration?: boolean }) => Promise<Baby>;
   removeBaby: (id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -217,13 +222,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   isLoading: true,
   isInitialized: false,
   locale: 'system',
+  onboardingCompleted: false,
 
   initialize: async () => {
     await setupNotificationChannel();
-    const [babies, locale, savedActiveId] = await Promise.all([
+    const [babies, locale, savedActiveId, onboardingCompleted] = await Promise.all([
       getAllBabies(),
       getAppLocale(),
       getActiveBabyId(),
+      getOnboardingCompleted(),
     ]);
     const activeBabyId =
       (savedActiveId && babies.some((b) => b.id === savedActiveId)
@@ -231,12 +238,56 @@ export const useAppStore = create<AppState>((set, get) => ({
         : null) ??
       babies[0]?.id ??
       null;
-    set({ babies, locale, activeBabyId, isLoading: false, isInitialized: true });
+    set({
+      babies,
+      locale,
+      activeBabyId,
+      onboardingCompleted,
+      isLoading: false,
+      isInitialized: true,
+    });
     if (activeBabyId) {
       await setActiveBabyId(activeBabyId);
       await get().setActiveBaby(activeBabyId);
     } else {
       await setActiveBabyId(null);
+    }
+  },
+
+  setOnboardingCompleted: async (done) => {
+    await setOnboardingCompleted(done);
+    set({ onboardingCompleted: done });
+  },
+
+  wipeLocalData: async () => {
+    const chores = get().dailyChores;
+    for (const chore of chores) {
+      await cancelAllTaskNotifications(chore.id);
+    }
+    await cancelSleepReminder();
+    const { wipeLocalDataOnly } = await import('@/lib/deleteAccount');
+    await wipeLocalDataOnly();
+    set({
+      babies: [],
+      activeBabyId: null,
+      events: [],
+      sleepPauses: [],
+      feedings: [],
+      diapers: [],
+      baths: [],
+      wakes: [],
+      dayContextTags: [],
+      dailyChores: [],
+      completedChoreIdsToday: [],
+      prediction: null,
+      onboardingCompleted: true,
+    });
+    syncSleepLiveActivity(null);
+    try {
+      const { publishWidgetBridge } = await import('@/lib/widgetBridge');
+      await publishWidgetBridge();
+    } catch {
+      // ignore
     }
   },
 
@@ -519,7 +570,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!ongoing) return;
     await updateFeedingEvent({ ...ongoing, endTime: new Date().toISOString() });
     await get().refreshEvents();
-    queueCloudSync();
+    await flushCloudSync();
   },
 
   addFeeding: async (input) => {

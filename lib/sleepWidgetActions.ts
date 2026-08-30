@@ -103,6 +103,12 @@ export async function applyWidgetInteraction(
       await useAppStore.getState().initialize();
     }
     await runHouseholdSync();
+    // Ensure Home widget + Watch snapshot refresh after partner pull.
+    const store = useAppStore.getState();
+    if (store.activeBabyId) {
+      await store.refreshEvents();
+    }
+    await publishWidgetBridge();
     if (actionAt > 0) {
       await setLastProcessedAt(Math.max(actionAt, Date.now()));
     }
@@ -127,22 +133,37 @@ async function reconcilePendingFromWidget(): Promise<void> {
     const SleepHomeWidget =
       require('@/widgets/SleepHomeWidget').default as typeof import('@/widgets/SleepHomeWidget').default;
     const timeline = await SleepHomeWidget.getTimeline();
-    if (!timeline.length) return;
-
-    let best: { action: SleepWidgetInteraction; at: number } | null = null;
-    for (const entry of timeline) {
-      const action = entry.props.pendingAction;
-      const at = entry.props.pendingActionAt ?? 0;
-      if (!action || !isWidgetInteraction(action) || at <= 0) continue;
-      if (!best || at > best.at) best = { action, at };
+    if (timeline.length) {
+      let best: { action: SleepWidgetInteraction; at: number } | null = null;
+      for (const entry of timeline) {
+        const action = entry.props.pendingAction;
+        const at = entry.props.pendingActionAt ?? 0;
+        if (!action || !isWidgetInteraction(action) || at <= 0) continue;
+        if (!best || at > best.at) best = { action, at };
+      }
+      if (best) {
+        const last = await getLastProcessedAt();
+        if (best.at > last) {
+          await applyWidgetInteraction(best.action, best.at, { fromReconcile: true });
+        }
+      }
     }
-    if (!best) return;
-
-    const last = await getLastProcessedAt();
-    if (best.at <= last) return;
-    await applyWidgetInteraction(best.action, best.at, { fromReconcile: true });
   } catch (error) {
     console.warn('[sleepWidgetActions] reconcile failed', error);
+  }
+
+  // 3) Always pull-heal on foreground (covers empty queue / failed widget Sync).
+  try {
+    const { flushHouseholdAutoSyncNow } = await import('@/lib/autoSync');
+    await flushHouseholdAutoSyncNow();
+    const { useAppStore } = await import('@/store/useAppStore');
+    const store = useAppStore.getState();
+    if (store.activeBabyId) {
+      await store.refreshEvents();
+    }
+    await publishWidgetBridge();
+  } catch (error) {
+    console.warn('[sleepWidgetActions] foreground heal failed', error);
   }
 }
 
@@ -163,6 +184,17 @@ async function handleTarget(target: string, timestamp?: number): Promise<void> {
         target,
         timestamp && timestamp > 0 ? timestamp : Date.now()
       );
+      // applyWidgetInteraction(sync) already flushes; other actions flush via store.
+      // Still heal once so pull picks up partner writes stamped while we were killed.
+      if (target !== 'sync') {
+        const { flushHouseholdAutoSyncNow } = await import('@/lib/autoSync');
+        await flushHouseholdAutoSyncNow();
+        const { useAppStore } = await import('@/store/useAppStore');
+        const store = useAppStore.getState();
+        if (store.activeBabyId) {
+          await store.refreshEvents();
+        }
+      }
     }
     await publishWidgetBridge();
   } finally {

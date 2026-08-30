@@ -1,8 +1,10 @@
 import {
   SYNC_PULL_PAGE_SIZE,
   filterChangedPushRows,
+  filterTimedEventPushRows,
   payloadsEqual,
   pullAllPages,
+  shouldKeepLocalEndOverRemoteOpen,
   shouldKeepLocalOverRemote,
   stripSyncMeta,
 } from '@/lib/syncDiff';
@@ -72,6 +74,51 @@ describe('syncDiff', () => {
         lastSyncedAt: '2026-08-20T10:00:00.000Z',
       })
     ).toBe(false);
+  });
+
+  it('keeps local end over a still-open remote even if remote updated_at is newer', () => {
+    expect(
+      shouldKeepLocalEndOverRemoteOpen({
+        localEndTime: '2026-08-30T11:00:00.000Z',
+        remoteEndTime: null,
+      })
+    ).toBe(true);
+    expect(
+      shouldKeepLocalEndOverRemoteOpen({
+        localEndTime: null,
+        remoteEndTime: '2026-08-30T11:00:00.000Z',
+      })
+    ).toBe(false);
+  });
+
+  it('pushes still-asleep reopen over a stale remote end_time', () => {
+    const snapshots = new Map<string, Record<string, unknown>>([
+      [
+        'sleep_events:a',
+        {
+          id: 'a',
+          type: 'nap',
+          start_time: 't1',
+          end_time: '2026-08-20T09:50:00.000Z',
+        },
+      ],
+    ]);
+    const rows = [
+      {
+        id: 'a',
+        type: 'nap',
+        start_time: 't1',
+        end_time: null,
+        updated_at: 'now',
+      },
+    ];
+    const changed = filterTimedEventPushRows(
+      rows,
+      snapshots,
+      (row) => `sleep_events:${row.id}`
+    );
+    expect(changed).toHaveLength(1);
+    expect(changed[0].end_time).toBeNull();
   });
 
   it('paginates pulls until a short page', async () => {

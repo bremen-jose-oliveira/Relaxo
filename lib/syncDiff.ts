@@ -81,6 +81,19 @@ export function shouldKeepLocalOverRemote(opts: {
 }
 
 /**
+ * Local already ended the sleep/feed; remote is still open.
+ * Never reopen from a remote `updated_at` bump on an open row.
+ */
+export function shouldKeepLocalEndOverRemoteOpen(opts: {
+  localEndTime: string | null | undefined;
+  remoteEndTime: string | null | undefined;
+}): boolean {
+  const localEnded = opts.localEndTime != null && String(opts.localEndTime).length > 0;
+  const remoteOpen = opts.remoteEndTime == null || String(opts.remoteEndTime).length === 0;
+  return localEnded && remoteOpen;
+}
+
+/**
  * Keep only rows that are new or differ from the last remote snapshot.
  * Rows with no snapshot are treated as needing a push.
  */
@@ -94,6 +107,22 @@ export function filterChangedPushRows(
     if (!remote) return true;
     return !payloadsEqual(stripSyncMeta(row), remote);
   });
+}
+
+/**
+ * Sleep/feed push filter: include intentional reopens (local `end_time` null
+ * while the last remote snapshot still has an end).
+ *
+ * Partner/widget ends that are newer than `lastSyncedAt` are applied on pull
+ * via `shouldKeepLocalOverRemote`, so they never reach push as local-open +
+ * remote-closed. Blocking open-over-closed here used to strand "still asleep".
+ */
+export function filterTimedEventPushRows(
+  rows: Record<string, unknown>[],
+  snapshots: Map<string, Record<string, unknown>>,
+  keyForRow: (row: Record<string, unknown>) => string
+): Record<string, unknown>[] {
+  return filterChangedPushRows(rows, snapshots, keyForRow);
 }
 
 /** PostgREST / Supabase default max rows per request. */

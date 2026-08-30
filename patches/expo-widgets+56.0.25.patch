@@ -8,11 +8,11 @@ index 0000000..f76dd23
 Binary files /dev/null and b/node_modules/expo-widgets/android/.gradle/9.2.0/fileChanges/last-build.bin differ
 diff --git a/node_modules/expo-widgets/android/.gradle/9.2.0/fileHashes/fileHashes.bin b/node_modules/expo-widgets/android/.gradle/9.2.0/fileHashes/fileHashes.bin
 new file mode 100644
-index 0000000..23c0247
+index 0000000..2a3c3aa
 Binary files /dev/null and b/node_modules/expo-widgets/android/.gradle/9.2.0/fileHashes/fileHashes.bin differ
 diff --git a/node_modules/expo-widgets/android/.gradle/9.2.0/fileHashes/fileHashes.lock b/node_modules/expo-widgets/android/.gradle/9.2.0/fileHashes/fileHashes.lock
 new file mode 100644
-index 0000000..a90f84b
+index 0000000..f722844
 Binary files /dev/null and b/node_modules/expo-widgets/android/.gradle/9.2.0/fileHashes/fileHashes.lock differ
 diff --git a/node_modules/expo-widgets/android/.gradle/9.2.0/gc.properties b/node_modules/expo-widgets/android/.gradle/9.2.0/gc.properties
 new file mode 100644
@@ -152,17 +152,18 @@ index 0000000..91b5cc0
 +__r(0);
 \ No newline at end of file
 diff --git a/node_modules/expo-widgets/ios/Widgets/AppIntent.swift b/node_modules/expo-widgets/ios/Widgets/AppIntent.swift
-index 972fa4f..ff27011 100644
+index 972fa4f..bfd8840 100644
 --- a/node_modules/expo-widgets/ios/Widgets/AppIntent.swift
 +++ b/node_modules/expo-widgets/ios/Widgets/AppIntent.swift
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  import AppIntents
  import WidgetKit
 +import Foundation
++import ActivityKit
  
  struct WidgetReload: AppIntent {
    // title is not used for non-discoverable intents, but it is required
-@@ -23,6 +24,392 @@ struct WidgetReload: AppIntent {
+@@ -23,6 +25,846 @@ struct WidgetReload: AppIntent {
    }
  }
  
@@ -208,18 +209,73 @@ index 972fa4f..ff27011 100644
 +    return out
 +  }
 +
++  static func saveBridge(_ bridge: [String: String]) {
++    guard let defaults = UserDefaults(suiteName: appGroupId),
++          let data = try? JSONSerialization.data(withJSONObject: bridge),
++          let json = String(data: data, encoding: .utf8) else {
++      return
++    }
++    defaults.set(json, forKey: bridgeKey)
++    defaults.synchronize()
++  }
++
++  static func refreshAccessToken(bridge: inout [String: String]) async -> String? {
++    guard let refresh = bridge["refreshToken"], !refresh.isEmpty,
++          let apiKey = bridge["supabaseKey"], !apiKey.isEmpty,
++          let supabaseUrl = bridge["supabaseUrl"], !supabaseUrl.isEmpty else {
++      return nil
++    }
++    let base = supabaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
++    guard let url = URL(string: base + "/auth/v1/token?grant_type=refresh_token") else {
++      return nil
++    }
++    var request = URLRequest(url: url)
++    request.httpMethod = "POST"
++    request.setValue(apiKey, forHTTPHeaderField: "apikey")
++    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++    request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refresh])
++    do {
++      let (data, response) = try await URLSession.shared.data(for: request)
++      if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
++        print("[RelaxoWidget] token refresh HTTP \(http.statusCode)")
++        return nil
++      }
++      guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
++            let access = obj["access_token"] as? String,
++            !access.isEmpty else {
++        return nil
++      }
++      bridge["accessToken"] = access
++      if let nextRefresh = obj["refresh_token"] as? String, !nextRefresh.isEmpty {
++        bridge["refreshToken"] = nextRefresh
++      }
++      saveBridge(bridge)
++      return access
++    } catch {
++      print("[RelaxoWidget] token refresh failed: \(error)")
++      return nil
++    }
++  }
++
 +  /// Best-effort cloud write while the host app may be killed.
++  /// Sync returns "__synced__" or "__sync_failed__".
 +  static func tryCloudApply(target: String?, source: String? = nil) async -> String? {
-+    guard let target,
-+          let bridge = bridge(),
-+          let accessToken = bridge["accessToken"],
++    guard let target else { return nil }
++    guard var bridge = bridge(),
 +          let supabaseUrl = bridge["supabaseUrl"],
 +          let supabaseKey = bridge["supabaseKey"],
 +          let householdId = bridge["householdId"],
 +          let babyId = bridge["babyId"],
-+          !accessToken.isEmpty,
 +          !supabaseUrl.isEmpty else {
-+      return nil
++      return target == "sync" ? "__sync_failed__" : nil
++    }
++
++    var accessToken = bridge["accessToken"] ?? ""
++    if accessToken.isEmpty {
++      accessToken = await refreshAccessToken(bridge: &bridge) ?? ""
++    }
++    guard !accessToken.isEmpty else {
++      return target == "sync" ? "__sync_failed__" : nil
 +    }
 +
 +    let base = supabaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -242,39 +298,118 @@ index 972fa4f..ff27011 100644
 +          "updated_at": nowIso,
 +          "deleted_at": NSNull()
 +        ]]
-+        try await restUpsert(base: base, path: "/rest/v1/sleep_events", body: body, accessToken: accessToken, apiKey: supabaseKey)
++        try await restUpsert(
++          base: base,
++          path: "/rest/v1/sleep_events",
++          body: body,
++          accessToken: &accessToken,
++          apiKey: supabaseKey,
++          bridge: &bridge
++        )
 +        return sleepId
 +
 +      case "end":
-+        if let openId = try await fetchOpenSleepId(base: base, babyId: babyId, accessToken: accessToken, apiKey: supabaseKey) {
++        if let openId = try await fetchOpenSleepId(
++          base: base,
++          babyId: babyId,
++          accessToken: &accessToken,
++          apiKey: supabaseKey,
++          bridge: &bridge
++        ) {
 +          try await restPatch(
 +            base: base,
 +            path: "/rest/v1/sleep_events?id=eq.\(openId)",
 +            body: ["end_time": nowIso, "updated_at": nowIso],
-+            accessToken: accessToken,
-+            apiKey: supabaseKey
++            accessToken: &accessToken,
++            apiKey: supabaseKey,
++            bridge: &bridge
 +          )
 +          return openId
 +        }
 +
++      case "pause":
++        if let openId = try await fetchOpenSleepId(
++          base: base,
++          babyId: babyId,
++          accessToken: &accessToken,
++          apiKey: supabaseKey,
++          bridge: &bridge
++        ) {
++          // Close any open pause first (defensive), then insert a new one.
++          try await restPatch(
++            base: base,
++            path: "/rest/v1/sleep_pauses?sleep_event_id=eq.\(openId)&end_time=is.null",
++            body: ["end_time": nowIso, "updated_at": nowIso],
++            accessToken: &accessToken,
++            apiKey: supabaseKey,
++            bridge: &bridge
++          )
++          let pauseId = UUID().uuidString.lowercased()
++          let body: [[String: Any]] = [[
++            "id": pauseId,
++            "household_id": householdId,
++            "sleep_event_id": openId,
++            "start_time": nowIso,
++            "end_time": NSNull(),
++            "updated_at": nowIso,
++            "deleted_at": NSNull()
++          ]]
++          try await restUpsert(
++            base: base,
++            path: "/rest/v1/sleep_pauses",
++            body: body,
++            accessToken: &accessToken,
++            apiKey: supabaseKey,
++            bridge: &bridge
++          )
++          return pauseId
++        }
++
++      case "resume":
++        if let openId = try await fetchOpenSleepId(
++          base: base,
++          babyId: babyId,
++          accessToken: &accessToken,
++          apiKey: supabaseKey,
++          bridge: &bridge
++        ) {
++          if let pauseId = try await fetchOpenPauseId(
++            base: base,
++            sleepEventId: openId,
++            accessToken: &accessToken,
++            apiKey: supabaseKey,
++            bridge: &bridge
++          ) {
++            try await restPatch(
++              base: base,
++              path: "/rest/v1/sleep_pauses?id=eq.\(pauseId)",
++              body: ["end_time": nowIso, "updated_at": nowIso],
++              accessToken: &accessToken,
++              apiKey: supabaseKey,
++              bridge: &bridge
++            )
++            return pauseId
++          }
++        }
++
 +      case "sync":
-+        // Refresh widget UI from cloud while host app may be killed.
-+        // Full SQLite sync still happens when the app next opens (pending queue).
 +        let widgetSource = source ?? "SleepHomeWidget"
-+        _ = await tryCloudRefreshWidget(
++        let ok = await tryCloudRefreshWidget(
 +          source: widgetSource,
 +          babyId: babyId,
 +          base: base,
-+          accessToken: accessToken,
-+          apiKey: supabaseKey
++          accessToken: &accessToken,
++          apiKey: supabaseKey,
++          bridge: &bridge
 +        )
-+        return nil
++        return ok ? "__synced__" : "__sync_failed__"
 +
 +      default:
 +        break
 +      }
 +    } catch {
 +      print("[RelaxoWidget] cloud apply failed: \(error)")
++      if target == "sync" { return "__sync_failed__" }
 +    }
 +    return nil
 +  }
@@ -284,11 +419,18 @@ index 972fa4f..ff27011 100644
 +    source: String,
 +    babyId: String,
 +    base: String,
-+    accessToken: String,
-+    apiKey: String
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
 +  ) async -> Bool {
 +    do {
-+      let open = try await fetchOpenSleepRow(base: base, babyId: babyId, accessToken: accessToken, apiKey: apiKey)
++      let open = try await fetchOpenSleepRow(
++        base: base,
++        babyId: babyId,
++        accessToken: &accessToken,
++        apiKey: apiKey,
++        bridge: &bridge
++      )
 +      guard var timeline = WidgetsStorage.getArray(forKey: "__expo_widgets_\(source)_timeline") as? [[String: Any]],
 +            !timeline.isEmpty,
 +            var props = timeline[0]["props"] as? [String: Any] else {
@@ -305,7 +447,9 @@ index 972fa4f..ff27011 100644
 +      let labelStartNap = props["labelStartNap"] as? String ?? "Nap"
 +      let labelStartBedtime = props["labelStartBedtime"] as? String ?? "Bedtime"
 +      let labelAwake = props["labelAwake"] as? String ?? "Awake"
-+      let babyName = props["title"] as? String ?? "Relaxo"
++      let babyName = (props["babyName"] as? String)
++        ?? (props["asleep"] as? Bool == true ? nil : props["title"] as? String)
++        ?? "Relaxo"
 +
 +      if let open {
 +        let isNight = (open["type"] as? String) == "night"
@@ -314,6 +458,7 @@ index 972fa4f..ff27011 100644
 +        props["asleep"] = true
 +        props["paused"] = false
 +        props["statusTone"] = "asleep"
++        props["sleepType"] = isNight ? "night" : "nap"
 +        props["title"] = isNight ? labelBedtime : labelNap
 +        props["subtitle"] = labelSleepingFor
 +        props["showTimer"] = true
@@ -325,12 +470,21 @@ index 972fa4f..ff27011 100644
 +        props["secondaryTarget"] = "pause"
 +        props["showPrediction"] = false
 +        props["showReadiness"] = false
-+      } else if let lastEnd = try await fetchLastEndedSleepEnd(base: base, babyId: babyId, accessToken: accessToken, apiKey: apiKey) {
++        if props["babyName"] == nil { props["babyName"] = babyName }
++      } else if let lastEnd = try await fetchLastEndedSleepEnd(
++        base: base,
++        babyId: babyId,
++        accessToken: &accessToken,
++        apiKey: apiKey,
++        bridge: &bridge
++      ) {
 +        let endMs = parseIsoMs(lastEnd) ?? now
 +        props["asleep"] = false
 +        props["paused"] = false
 +        props["statusTone"] = "awake"
++        props["sleepType"] = ""
 +        props["title"] = babyName
++        props["babyName"] = babyName
 +        props["subtitle"] = labelAwake
 +        props["showTimer"] = true
 +        props["timerLowerMs"] = endMs
@@ -339,6 +493,27 @@ index 972fa4f..ff27011 100644
 +        props["primaryTarget"] = "start-nap"
 +        props["secondaryLabel"] = labelStartBedtime
 +        props["secondaryTarget"] = "start-bedtime"
++      } else {
++        // No open sleep and no history — clear Sync flash and restore awake chrome.
++        props["asleep"] = false
++        props["paused"] = false
++        props["statusTone"] = "awake"
++        props["sleepType"] = ""
++        props["title"] = babyName
++        props["babyName"] = babyName
++        props["subtitle"] = labelAwake
++        props["showTimer"] = false
++        props["primaryLabel"] = labelStartNap
++        props["primaryTarget"] = "start-nap"
++        props["secondaryLabel"] = labelStartBedtime
++        props["secondaryTarget"] = "start-bedtime"
++        props["pendingAction"] = ""
++        props["pendingActionAt"] = 0
++        timeline[0]["props"] = props
++        WidgetsStorage.set(timeline, forKey: "__expo_widgets_\(source)_timeline")
++        WidgetCenter.shared.reloadTimelines(ofKind: source)
++        publishWatchSnapshot(from: props)
++        return true
 +      }
 +
 +      props["pendingAction"] = ""
@@ -346,10 +521,65 @@ index 972fa4f..ff27011 100644
 +      timeline[0]["props"] = props
 +      WidgetsStorage.set(timeline, forKey: "__expo_widgets_\(source)_timeline")
 +      WidgetCenter.shared.reloadTimelines(ofKind: source)
++      publishWatchSnapshot(from: props)
 +      return true
 +    } catch {
 +      print("[RelaxoWidget] cloud refresh failed: \(error)")
 +      return false
++    }
++  }
++
++  /// Keep Watch app + complications in sync when the host app is killed.
++  static func publishWatchSnapshot(from props: [String: Any]) {
++    let babyName = (props["babyName"] as? String)
++      ?? (props["asleep"] as? Bool == true ? nil : props["title"] as? String)
++      ?? "Relaxo"
++    let snapshot: [String: Any] = [
++      "v": 1,
++      "updatedAt": Int(Date().timeIntervalSince1970 * 1000),
++      "statusTone": props["statusTone"] as? String ?? "awake",
++      "title": props["title"] as? String ?? "Relaxo",
++      "subtitle": props["subtitle"] as? String ?? "",
++      "asleep": props["asleep"] as? Bool ?? false,
++      "paused": props["paused"] as? Bool ?? false,
++      "showTimer": props["showTimer"] as? Bool ?? false,
++      "timerLowerMs": props["timerLowerMs"] as? Int ?? 0,
++      "showPrediction": props["showPrediction"] as? Bool ?? false,
++      "predictionTime": props["predictionTime"] as? String ?? "",
++      "predictionLabel": props["predictionLabel"] as? String ?? "",
++      "readinessLabel": props["readinessLabel"] as? String ?? "",
++      "babyName": babyName,
++      "primaryLabel": props["primaryLabel"] as? String ?? "Nap",
++      "primaryTarget": props["primaryTarget"] as? String ?? "start-nap",
++      "secondaryLabel": props["secondaryLabel"] as? String ?? "Bedtime",
++      "secondaryTarget": props["secondaryTarget"] as? String ?? "start-bedtime",
++    ]
++    guard let defaults = UserDefaults(suiteName: appGroupId),
++          let data = try? JSONSerialization.data(withJSONObject: snapshot),
++          let json = String(data: data, encoding: .utf8) else {
++      return
++    }
++    defaults.set(json, forKey: "relaxo.watchSnapshot")
++    defaults.synchronize()
++    WidgetCenter.shared.reloadTimelines(ofKind: "RelaxoWatchWidget")
++  }
++
++  static func restoreSubtitleAfterSyncFlash(_ props: inout [String: Any]) {
++    let asleep = props["asleep"] as? Bool ?? false
++    let paused = props["paused"] as? Bool ?? false
++    if asleep {
++      props["subtitle"] = paused
++        ? (props["labelAwakeSince"] as? String ?? "Awake")
++        : (props["labelSleepingFor"] as? String ?? "Sleeping")
++    } else if props["showPrediction"] as? Bool == true,
++              let predictionTime = props["predictionTime"] as? String,
++              !predictionTime.isEmpty {
++      // Keep prediction chrome; subtitle may already be readiness/awake.
++      if (props["subtitle"] as? String) == (props["labelSync"] as? String ?? "Sync") {
++        props["subtitle"] = props["labelAwake"] as? String ?? "Awake"
++      }
++    } else {
++      props["subtitle"] = props["labelAwake"] as? String ?? "Awake"
 +    }
 +  }
 +
@@ -367,22 +597,60 @@ index 972fa4f..ff27011 100644
 +    return nil
 +  }
 +
-+  private static func fetchOpenSleepRow(
-+    base: String,
-+    babyId: String,
-+    accessToken: String,
-+    apiKey: String
-+  ) async throws -> [String: Any]? {
-+    let path = "/rest/v1/sleep_events?baby_id=eq.\(babyId)&end_time=is.null&select=id,type,start_time&order=start_time.desc&limit=1"
-+    guard let url = URL(string: base + path) else { return nil }
-+    var request = URLRequest(url: url)
-+    request.httpMethod = "GET"
-+    request.setValue(apiKey, forHTTPHeaderField: "apikey")
-+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-+    let (data, response) = try await URLSession.shared.data(for: request)
++  private static func encodedBabyId(_ babyId: String) -> String {
++    babyId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? babyId
++  }
++
++  private static func authorizedRequest(
++    url: URL,
++    method: String,
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String],
++    body: Data? = nil,
++    extraHeaders: [String: String] = [:]
++  ) async throws -> (Data, URLResponse) {
++    func makeRequest(token: String) -> URLRequest {
++      var request = URLRequest(url: url)
++      request.httpMethod = method
++      request.setValue(apiKey, forHTTPHeaderField: "apikey")
++      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
++      for (k, v) in extraHeaders {
++        request.setValue(v, forHTTPHeaderField: k)
++      }
++      request.httpBody = body
++      return request
++    }
++
++    var (data, response) = try await URLSession.shared.data(for: makeRequest(token: accessToken))
++    if let http = response as? HTTPURLResponse, http.statusCode == 401 {
++      if let refreshed = await refreshAccessToken(bridge: &bridge) {
++        accessToken = refreshed
++        (data, response) = try await URLSession.shared.data(for: makeRequest(token: accessToken))
++      }
++    }
 +    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
 +      throw NSError(domain: "RelaxoWidget", code: http.statusCode)
 +    }
++    return (data, response)
++  }
++
++  private static func fetchOpenSleepRow(
++    base: String,
++    babyId: String,
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
++  ) async throws -> [String: Any]? {
++    let path = "/rest/v1/sleep_events?baby_id=eq.\(encodedBabyId(babyId))&end_time=is.null&select=id,type,start_time&order=start_time.desc&limit=1"
++    guard let url = URL(string: base + path) else { return nil }
++    let (data, _) = try await authorizedRequest(
++      url: url,
++      method: "GET",
++      accessToken: &accessToken,
++      apiKey: apiKey,
++      bridge: &bridge
++    )
 +    let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
 +    return rows?.first
 +  }
@@ -390,64 +658,108 @@ index 972fa4f..ff27011 100644
 +  private static func fetchLastEndedSleepEnd(
 +    base: String,
 +    babyId: String,
-+    accessToken: String,
-+    apiKey: String
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
 +  ) async throws -> String? {
-+    let path = "/rest/v1/sleep_events?baby_id=eq.\(babyId)&end_time=not.is.null&select=end_time&order=end_time.desc&limit=1"
++    let path = "/rest/v1/sleep_events?baby_id=eq.\(encodedBabyId(babyId))&end_time=not.is.null&select=end_time&order=end_time.desc&limit=1"
 +    guard let url = URL(string: base + path) else { return nil }
-+    var request = URLRequest(url: url)
-+    request.httpMethod = "GET"
-+    request.setValue(apiKey, forHTTPHeaderField: "apikey")
-+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-+    let (data, response) = try await URLSession.shared.data(for: request)
-+    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-+      throw NSError(domain: "RelaxoWidget", code: http.statusCode)
-+    }
++    let (data, _) = try await authorizedRequest(
++      url: url,
++      method: "GET",
++      accessToken: &accessToken,
++      apiKey: apiKey,
++      bridge: &bridge
++    )
 +    let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
 +    return rows?.first?["end_time"] as? String
 +  }
 +
-+  private static func restUpsert(base: String, path: String, body: [[String: Any]], accessToken: String, apiKey: String) async throws {
++  private static func restUpsert(
++    base: String,
++    path: String,
++    body: [[String: Any]],
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
++  ) async throws {
 +    guard let url = URL(string: base + path) else { return }
-+    var request = URLRequest(url: url)
-+    request.httpMethod = "POST"
-+    request.setValue(apiKey, forHTTPHeaderField: "apikey")
-+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-+    request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
-+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-+    let (_, response) = try await URLSession.shared.data(for: request)
-+    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-+      throw NSError(domain: "RelaxoWidget", code: http.statusCode)
-+    }
++    let data = try JSONSerialization.data(withJSONObject: body)
++    _ = try await authorizedRequest(
++      url: url,
++      method: "POST",
++      accessToken: &accessToken,
++      apiKey: apiKey,
++      bridge: &bridge,
++      body: data,
++      extraHeaders: [
++        "Content-Type": "application/json",
++        "Prefer": "resolution=merge-duplicates,return=minimal"
++      ]
++    )
 +  }
 +
-+  private static func restPatch(base: String, path: String, body: [String: Any], accessToken: String, apiKey: String) async throws {
++  private static func restPatch(
++    base: String,
++    path: String,
++    body: [String: Any],
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
++  ) async throws {
 +    guard let url = URL(string: base + path) else { return }
-+    var request = URLRequest(url: url)
-+    request.httpMethod = "PATCH"
-+    request.setValue(apiKey, forHTTPHeaderField: "apikey")
-+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-+    request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
-+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-+    let (_, response) = try await URLSession.shared.data(for: request)
-+    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-+      throw NSError(domain: "RelaxoWidget", code: http.statusCode)
-+    }
++    let data = try JSONSerialization.data(withJSONObject: body)
++    _ = try await authorizedRequest(
++      url: url,
++      method: "PATCH",
++      accessToken: &accessToken,
++      apiKey: apiKey,
++      bridge: &bridge,
++      body: data,
++      extraHeaders: [
++        "Content-Type": "application/json",
++        "Prefer": "return=minimal"
++      ]
++    )
 +  }
 +
-+  private static func fetchOpenSleepId(base: String, babyId: String, accessToken: String, apiKey: String) async throws -> String? {
-+    let path = "/rest/v1/sleep_events?baby_id=eq.\(babyId)&end_time=is.null&select=id&order=start_time.desc&limit=1"
++  private static func fetchOpenSleepId(
++    base: String,
++    babyId: String,
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
++  ) async throws -> String? {
++    let path = "/rest/v1/sleep_events?baby_id=eq.\(encodedBabyId(babyId))&end_time=is.null&select=id&order=start_time.desc&limit=1"
 +    guard let url = URL(string: base + path) else { return nil }
-+    var request = URLRequest(url: url)
-+    request.httpMethod = "GET"
-+    request.setValue(apiKey, forHTTPHeaderField: "apikey")
-+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-+    let (data, response) = try await URLSession.shared.data(for: request)
-+    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-+      throw NSError(domain: "RelaxoWidget", code: http.statusCode)
-+    }
++    let (data, _) = try await authorizedRequest(
++      url: url,
++      method: "GET",
++      accessToken: &accessToken,
++      apiKey: apiKey,
++      bridge: &bridge
++    )
++    let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
++    return rows?.first?["id"] as? String
++  }
++
++  private static func fetchOpenPauseId(
++    base: String,
++    sleepEventId: String,
++    accessToken: inout String,
++    apiKey: String,
++    bridge: inout [String: String]
++  ) async throws -> String? {
++    let encoded = sleepEventId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sleepEventId
++    let path = "/rest/v1/sleep_pauses?sleep_event_id=eq.\(encoded)&end_time=is.null&select=id&order=start_time.desc&limit=1"
++    guard let url = URL(string: base + path) else { return nil }
++    let (data, _) = try await authorizedRequest(
++      url: url,
++      method: "GET",
++      accessToken: &accessToken,
++      apiKey: apiKey,
++      bridge: &bridge
++    )
 +    let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
 +    return rows?.first?["id"] as? String
 +  }
@@ -502,7 +814,7 @@ index 972fa4f..ff27011 100644
 +      out["asleep"] = false
 +      out["paused"] = false
 +      out["statusTone"] = "awake"
-+      out["title"] = title
++      out["title"] = props["babyName"] as? String ?? title
 +      out["subtitle"] = labelAwake
 +      out["showTimer"] = true
 +      out["timerLowerMs"] = now
@@ -552,21 +864,205 @@ index 972fa4f..ff27011 100644
 +  }
 +}
 +
++/// Start / update / end Dynamic Island Live Activity from widget intents
++/// (host app may be killed — JS `syncSleepLiveActivity` never runs).
++enum RelaxoLiveActivitySync {
++  static let activityName = "SleepLiveActivity"
++  static let activityUrl = "relaxo:///"
++
++  static func apply(target: String?, widgetProps: [String: Any]?) async {
++    guard #available(iOS 16.2, *) else { return }
++    guard let target else { return }
++    guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
++
++    switch target {
++    case "start-nap", "start-bedtime", "pause", "resume":
++      guard let propsJson = propsJSON(target: target, widgetProps: widgetProps) else { return }
++      await upsert(propsJson: propsJson)
++    case "end":
++      await endAll()
++    default:
++      break
++    }
++  }
++
++  @available(iOS 16.2, *)
++  private static func upsert(propsJson: String) async {
++    WidgetsStorage.set(activityUrl, forKey: "__expo_widgets_live_activity_\(activityName)_url")
++    let state = LiveActivityAttributes.ContentState(name: activityName, props: propsJson)
++    let content = ActivityContent(state: state, staleDate: nil)
++
++    let existing = Activity<LiveActivityAttributes>.activities.filter {
++      $0.content.state.name == activityName
++    }
++
++    if let first = existing.first {
++      await first.update(content)
++      for extra in existing.dropFirst() {
++        await extra.end(nil, dismissalPolicy: .immediate)
++      }
++      return
++    }
++
++    do {
++      _ = try Activity.request(
++        attributes: LiveActivityAttributes(),
++        content: content,
++        pushType: nil
++      )
++    } catch {
++      print("[RelaxoWidget] live activity start failed: \(error)")
++    }
++  }
++
++  @available(iOS 16.2, *)
++  private static func endAll() async {
++    for activity in Activity<LiveActivityAttributes>.activities
++      where activity.content.state.name == activityName
++    {
++      await activity.end(nil, dismissalPolicy: .immediate)
++    }
++  }
++
++  private static func propsJSON(target: String, widgetProps: [String: Any]?) -> String? {
++    let now = Int(Date().timeIntervalSince1970 * 1000)
++    let yearMs = 365 * 24 * 60 * 60 * 1000
++    let labelNap = widgetProps?["labelNap"] as? String ?? "Nap"
++    let labelBedtime = widgetProps?["labelBedtime"] as? String ?? "Bedtime"
++    let labelEnd = widgetProps?["labelEnd"] as? String
++      ?? widgetProps?["primaryLabel"] as? String
++      ?? "End"
++    let labelPause = widgetProps?["labelPause"] as? String ?? "Pause"
++    let labelResume = widgetProps?["labelResume"] as? String ?? "Resume"
++    let labelSleepingFor = widgetProps?["labelSleepingFor"] as? String ?? "Sleeping"
++    let labelAwakeSince = widgetProps?["labelAwakeSince"] as? String ?? "Awake"
++    let labelBabyAwake = widgetProps?["labelBabyAwake"] as? String ?? "Awake"
++
++    // Prefer timer from optimistic widget props when present.
++    let timerLower = widgetProps?["timerLowerMs"] as? Int ?? now
++    let timerUpper = widgetProps?["timerUpperMs"] as? Int ?? (now + yearMs)
++
++    var dict: [String: Any]
++    switch target {
++    case "start-nap":
++      dict = [
++        "title": labelNap,
++        "subtitle": labelSleepingFor,
++        "paused": false,
++        "timerLowerMs": timerLower,
++        "timerUpperMs": timerUpper,
++        "endLabel": labelEnd,
++        "secondaryLabel": labelPause,
++        "secondaryTarget": "pause",
++        "endTarget": "end",
++      ]
++    case "start-bedtime":
++      dict = [
++        "title": labelBedtime,
++        "subtitle": labelSleepingFor,
++        "paused": false,
++        "timerLowerMs": timerLower,
++        "timerUpperMs": timerUpper,
++        "endLabel": labelEnd,
++        "secondaryLabel": labelPause,
++        "secondaryTarget": "pause",
++        "endTarget": "end",
++      ]
++    case "pause":
++      dict = [
++        "title": labelBabyAwake,
++        "subtitle": labelAwakeSince,
++        "paused": true,
++        "timerLowerMs": now,
++        "timerUpperMs": now + yearMs,
++        "endLabel": labelEnd,
++        "secondaryLabel": labelResume,
++        "secondaryTarget": "resume",
++        "endTarget": "end",
++      ]
++    case "resume":
++      let title = (widgetProps?["title"] as? String).flatMap { t in
++        t == labelBabyAwake ? labelNap : t
++      } ?? labelNap
++      dict = [
++        "title": title,
++        "subtitle": labelSleepingFor,
++        "paused": false,
++        "timerLowerMs": timerLower,
++        "timerUpperMs": timerUpper,
++        "endLabel": labelEnd,
++        "secondaryLabel": labelPause,
++        "secondaryTarget": "pause",
++        "endTarget": "end",
++      ]
++    default:
++      return nil
++    }
++
++    guard let data = try? JSONSerialization.data(withJSONObject: dict),
++          let json = String(data: data, encoding: .utf8) else {
++      return nil
++    }
++    return json
++  }
++}
++
  @available(iOS 16.0, *)
  struct WidgetUserInteraction: AppIntent {
    // title is not used for non-discoverable intents, but it is required
-@@ -53,6 +440,10 @@ struct WidgetUserInteraction: AppIntent {
+@@ -53,6 +895,51 @@ struct WidgetUserInteraction: AppIntent {
        return .result()
      }
  
 +    // Durable queue + optional cloud write (works even if the host app is killed).
 +    let cloudSleepId = await RelaxoWidgetPendingQueue.tryCloudApply(target: target, source: source)
-+    RelaxoWidgetPendingQueue.enqueue(source: source, target: target, sleepEventId: cloudSleepId)
++    let isSync = target == "sync"
++    let enqueueId = (cloudSleepId == "__synced__" || cloudSleepId == "__sync_failed__") ? nil : cloudSleepId
++    // Always enqueue sleep actions. Sync: enqueue only on failure so opening the app
++    // can still run a full household pull; success already refreshed the widget.
++    if !isSync || cloudSleepId == "__sync_failed__" {
++      RelaxoWidgetPendingQueue.enqueue(source: source, target: target, sleepEventId: enqueueId)
++    }
++
++    // Sync: cloud refresh already rewrote timeline — don't overwrite with "Sync" subtitle,
++    // and mirror open/closed sleep onto Dynamic Island + Watch.
++    if isSync {
++      if cloudSleepId == "__sync_failed__" {
++        if var entries = WidgetsStorage.getArray(forKey: "__expo_widgets_\(source)_timeline") as? [[String: Any]],
++           !entries.isEmpty,
++           var props = entries[0]["props"] as? [String: Any] {
++          RelaxoWidgetPendingQueue.restoreSubtitleAfterSyncFlash(&props)
++          props["pendingAction"] = ""
++          props["pendingActionAt"] = 0
++          entries[0]["props"] = props
++          WidgetsStorage.set(entries, forKey: "__expo_widgets_\(source)_timeline")
++          RelaxoWidgetPendingQueue.publishWatchSnapshot(from: props)
++        }
++      } else if let entries = WidgetsStorage.getArray(forKey: "__expo_widgets_\(source)_timeline") as? [[String: Any]],
++                let props = entries.first?["props"] as? [String: Any] {
++        let asleep = props["asleep"] as? Bool ?? false
++        if asleep {
++          let sleepType = props["sleepType"] as? String
++          let liveTarget = sleepType == "night" ? "start-bedtime" : "start-nap"
++          await RelaxoLiveActivitySync.apply(target: liveTarget, widgetProps: props)
++        } else {
++          await RelaxoLiveActivitySync.apply(target: "end", widgetProps: props)
++        }
++        RelaxoWidgetPendingQueue.publishWatchSnapshot(from: props)
++      }
++      WidgetsEvents.shared.sendNotification(type: .userEvent, data: [
++        "source": source as Any,
++        "target": target as Any,
++        "timestamp": Int(Date().timeIntervalSince1970 * 1000)
++      ])
++      WidgetCenter.shared.reloadTimelines(ofKind: source)
++      return .result()
++    }
 +
      let layout = WidgetsStorage.getString(forKey: "__expo_widgets_\(source)_layout") ?? ""
      let timeline = WidgetsStorage.getArray(forKey: "__expo_widgets_\(source)_timeline")
  
-@@ -63,6 +454,22 @@ struct WidgetUserInteraction: AppIntent {
+@@ -63,6 +950,27 @@ struct WidgetUserInteraction: AppIntent {
            let props = entry["props"] as? [String: Any],
            let environmentData = environmentString?.data(using: .utf8),
            var environment = try? JSONSerialization.jsonObject(with: environmentData) as? [String: Any] else {
@@ -576,9 +1072,14 @@ index 972fa4f..ff27011 100644
 +         let idx = entryIndex ?? (entries.isEmpty ? nil : 0),
 +         entries.indices.contains(idx),
 +         let props = entries[idx]["props"] as? [String: Any],
-+         let optimistic = RelaxoWidgetPendingQueue.optimisticProps(from: props, target: target) {
-+        entries[idx]["props"] = props.merging(optimistic) { _, new in new }
++          let optimistic = RelaxoWidgetPendingQueue.optimisticProps(from: props, target: target) {
++        let merged = props.merging(optimistic) { _, new in new }
++        entries[idx]["props"] = merged
 +        WidgetsStorage.set(entries, forKey: "__expo_widgets_\(source)_timeline")
++        await RelaxoLiveActivitySync.apply(target: target, widgetProps: merged)
++        RelaxoWidgetPendingQueue.publishWatchSnapshot(from: merged)
++      } else {
++        await RelaxoLiveActivitySync.apply(target: target, widgetProps: nil)
 +      }
 +      WidgetsEvents.shared.sendNotification(type: .userEvent, data: [
 +        "source": source as Any,
@@ -589,7 +1090,7 @@ index 972fa4f..ff27011 100644
        return .result()
      }
      environment["target"] = target
-@@ -73,7 +480,8 @@ struct WidgetUserInteraction: AppIntent {
+@@ -73,21 +981,28 @@ struct WidgetUserInteraction: AppIntent {
        newProps = result
      case .failure(let error):
        print("[ExpoWidgets] Button press evaluation failed: \(error.message)")
@@ -598,13 +1099,53 @@ index 972fa4f..ff27011 100644
 +      newProps = RelaxoWidgetPendingQueue.optimisticProps(from: props, target: target)
      }
  
++    var mergedProps = props
      if let newProps {
-@@ -119,6 +527,9 @@ struct LiveActivityUserInteraction: LiveActivityIntent {
+       var newEntry = entry
+       if let originalProps = entry["props"] as? [String: Any] {
+-        newEntry["props"] = originalProps.merging(newProps) { _, new in new }
++        mergedProps = originalProps.merging(newProps) { _, new in new }
++        newEntry["props"] = mergedProps
+       }
+       guard var newTimeline = timeline as? [[String: Any]] else {
++        await RelaxoLiveActivitySync.apply(target: target, widgetProps: mergedProps)
+         return .result()
+       }
+       newTimeline[entryIndex] = newEntry
+       WidgetsStorage.set(newTimeline, forKey: "__expo_widgets_\(source)_timeline")
+     }
+ 
++    await RelaxoLiveActivitySync.apply(target: target, widgetProps: mergedProps)
++    RelaxoWidgetPendingQueue.publishWatchSnapshot(from: mergedProps)
++
+     WidgetsEvents.shared.sendNotification(type: .userEvent, data: [
+       "source": source as Any,
+       "target": target as Any,
+@@ -119,6 +1034,28 @@ struct LiveActivityUserInteraction: LiveActivityIntent {
    }
  
    func perform() async throws -> some IntentResult {
 +    let cloudSleepId = await RelaxoWidgetPendingQueue.tryCloudApply(target: target, source: source)
 +    RelaxoWidgetPendingQueue.enqueue(source: source, target: target, sleepEventId: cloudSleepId)
++
++    // Update Dynamic Island immediately (don't wait for host app).
++    var widgetProps: [String: Any]? = nil
++    if var entries = WidgetsStorage.getArray(forKey: "__expo_widgets_SleepHomeWidget_timeline") as? [[String: Any]],
++       !entries.isEmpty,
++       let props = entries[0]["props"] as? [String: Any] {
++      if let optimistic = RelaxoWidgetPendingQueue.optimisticProps(from: props, target: target) {
++        let merged = props.merging(optimistic) { _, new in new }
++        widgetProps = merged
++        entries[0]["props"] = merged
++        WidgetsStorage.set(entries, forKey: "__expo_widgets_SleepHomeWidget_timeline")
++        WidgetCenter.shared.reloadTimelines(ofKind: "SleepHomeWidget")
++        RelaxoWidgetPendingQueue.publishWatchSnapshot(from: merged)
++      } else {
++        widgetProps = props
++        RelaxoWidgetPendingQueue.publishWatchSnapshot(from: props)
++      }
++    }
++    await RelaxoLiveActivitySync.apply(target: target, widgetProps: widgetProps)
 +
      WidgetsEvents.shared.sendNotification(type: .userEvent, data: [
        "source": source as Any,

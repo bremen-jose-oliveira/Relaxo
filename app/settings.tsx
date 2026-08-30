@@ -8,12 +8,15 @@ import {
   ScrollView,
   Pressable,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, type Href } from 'expo-router';
 import { AppleSignInButton } from '@/components/AppleSignInButton';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors, spacing, touchTarget } from '@/constants/Colors';
+import { SUPPORT_EMAIL, IMPRESSUM_URL, supportMailtoUrl } from '@/constants/legal';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BigButton } from '@/components/BigButton';
 import { Card, InfoRow } from '@/components/Card';
@@ -79,6 +82,8 @@ export default function SettingsScreen() {
   const createHousehold = useAuthStore((s) => s.createHousehold);
   const syncNow = useAuthStore((s) => s.syncNow);
   const joinWithCode = useAuthStore((s) => s.joinWithCode);
+  const wipeLocalData = useAppStore((s) => s.wipeLocalData);
+  const deleteAccount = useAuthStore((s) => s.deleteAccount);
 
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [parsedCsv, setParsedCsv] = useState<ParsedCsv | null>(null);
@@ -324,6 +329,91 @@ export default function SettingsScreen() {
 
   const handleSignOutCloud = async () => {
     await signOutCloud();
+  };
+
+  const handleContactSupport = async () => {
+    const url = supportMailtoUrl();
+    try {
+      const can = await Linking.canOpenURL(url);
+      if (!can) {
+        Alert.alert(t('legal.supportFailed', { email: SUPPORT_EMAIL }));
+        return;
+      }
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(t('legal.supportFailed', { email: SUPPORT_EMAIL }));
+    }
+  };
+
+  const handleOpenImpressum = async () => {
+    try {
+      await Linking.openURL(IMPRESSUM_URL);
+    } catch {
+      Alert.alert(t('legal.impressumFailed', { url: IMPRESSUM_URL }));
+    }
+  };
+
+  const runWipeLocal = async () => {
+    try {
+      await wipeLocalData();
+      Alert.alert(t('dataPrivacy.wiped'));
+    } catch (e) {
+      Alert.alert(
+        t('dataPrivacy.deleteFailed'),
+        e instanceof Error ? e.message : undefined
+      );
+    }
+  };
+
+  const handleWipeLocal = () => {
+    Alert.alert(t('dataPrivacy.wipeLocalConfirmTitle'), t('dataPrivacy.wipeLocalConfirmMsg'), [
+      { text: t('dataPrivacy.cancel'), style: 'cancel' },
+      {
+        text: t('dataPrivacy.exportFirst'),
+        onPress: () => {
+          void handleExport();
+        },
+      },
+      {
+        text: t('dataPrivacy.wipeLocalConfirm'),
+        style: 'destructive',
+        onPress: () => {
+          void runWipeLocal();
+        },
+      },
+    ]);
+  };
+
+  const runDeleteAccount = async () => {
+    const result = await deleteAccount();
+    if (!result.ok) {
+      Alert.alert(t('dataPrivacy.deleteFailed'), result.error);
+      return;
+    }
+    Alert.alert(t('dataPrivacy.accountDeleted'));
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      t('dataPrivacy.deleteAccountConfirmTitle'),
+      t('dataPrivacy.deleteAccountConfirmMsg'),
+      [
+        { text: t('dataPrivacy.cancel'), style: 'cancel' },
+        {
+          text: t('dataPrivacy.exportFirst'),
+          onPress: () => {
+            void handleExport();
+          },
+        },
+        {
+          text: t('dataPrivacy.deleteAccountConfirm'),
+          style: 'destructive',
+          onPress: () => {
+            void runDeleteAccount();
+          },
+        },
+      ]
+    );
   };
 
   const handleCheckUpdates = async () => {
@@ -662,6 +752,62 @@ export default function SettingsScreen() {
           onPress={handleImportData}
           style={{ marginBottom: spacing.lg }}
         />
+
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          {t('legal.sectionTitle')}
+        </Text>
+        <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+          {t('legal.medicalDisclaimer')}
+        </Text>
+        <Card style={{ marginBottom: spacing.lg }}>
+          <BigButton
+            title={t('legal.privacy')}
+            variant="secondary"
+            onPress={() => router.push('/legal/privacy' as Href)}
+            style={{ marginBottom: spacing.sm }}
+          />
+          <BigButton
+            title={t('legal.terms')}
+            variant="secondary"
+            onPress={() => router.push('/legal/terms' as Href)}
+            style={{ marginBottom: spacing.sm }}
+          />
+          <BigButton
+            title={t('legal.impressum')}
+            variant="secondary"
+            onPress={handleOpenImpressum}
+            style={{ marginBottom: spacing.sm }}
+          />
+          <BigButton title={t('legal.contactSupport')} onPress={handleContactSupport} />
+        </Card>
+
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          {t('dataPrivacy.sectionTitle')}
+        </Text>
+        <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+          {t('dataPrivacy.wipeLocalHint')}
+        </Text>
+        <BigButton
+          title={t('dataPrivacy.wipeLocal')}
+          variant="danger"
+          onPress={handleWipeLocal}
+          style={{ marginBottom: spacing.md }}
+        />
+        {authUser ? (
+          <>
+            <Text style={[styles.importHint, { color: colors.textSecondary }]}>
+              {t('dataPrivacy.deleteAccountHint')}
+            </Text>
+            <BigButton
+              title={t('dataPrivacy.deleteAccount')}
+              variant="danger"
+              onPress={handleDeleteAccount}
+              loading={isSyncing}
+              disabled={isSyncing}
+              style={{ marginBottom: spacing.lg }}
+            />
+          </>
+        ) : null}
       </ScrollView>
 
       <ImportPreviewModal

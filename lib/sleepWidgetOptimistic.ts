@@ -53,7 +53,7 @@ export function optimisticSleepHomeWidgetProps(
       asleep: false,
       paused: false,
       statusTone: 'awake',
-      title: props.title,
+      title: props.babyName || props.title,
       subtitle: props.labelAwake,
       showTimer: true,
       timerLowerMs: now,

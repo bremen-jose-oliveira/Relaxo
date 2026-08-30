@@ -2,6 +2,8 @@ import WidgetBridgeModule from './src/WidgetBridgeModule';
 
 export type WidgetBridgePayload = {
   accessToken: string;
+  /** Used by widget intents to renew accessToken when expired. */
+  refreshToken?: string;
   supabaseUrl: string;
   supabaseKey: string;
   householdId: string;

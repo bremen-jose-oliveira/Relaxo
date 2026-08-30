@@ -37,8 +37,10 @@ import {
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import {
   filterChangedPushRows as filterChangedRowsAgainstSnapshots,
+  filterTimedEventPushRows as filterTimedEventPushRowsPure,
   payloadsEqual,
   pullAllPages,
+  shouldKeepLocalEndOverRemoteOpen,
   shouldKeepLocalOverRemote,
 } from '@/lib/syncDiff';
 import type {
@@ -111,6 +113,27 @@ export type SyncResult = {
   pushed?: number;
   pulled?: number;
 };
+
+/** Serialize all sync callers (Settings, autoSync, widget drain). */
+let syncHouseholdChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Full household sync (local-first):
+ * 1. Apply remote soft-deletes locally (so partner deletes stick)
+ * 2. Pull live remote rows into SQLite (so ended sleeps update before we push)
+ * 3. Push current local rows to cloud
+ *
+ * This stops a stale open sleep on phone B from overwriting an ended sleep from phone A.
+ */
+export async function syncHouseholdData(): Promise<SyncResult> {
+  const run = syncHouseholdChain.then(() => syncHouseholdDataUnlocked());
+  // Keep the chain alive even when a run fails so the next caller isn't stuck.
+  syncHouseholdChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
 
 /** Load an existing household for this user. Never creates one. */
 export async function resolveExistingHousehold(): Promise<
@@ -485,17 +508,15 @@ function feedingLocalPayload(
   };
 }
 
-/** Don't push a stale open sleep/feed over a partner's ended row on cloud. */
+/** Sleep/feed push — allows intentional reopen (see syncDiff.filterTimedEventPushRows). */
 function filterTimedEventPushRows(
   table: 'sleep_events' | 'feeding_events',
   rows: Record<string, unknown>[],
   snapshots: Map<string, Record<string, unknown>>
 ): Record<string, unknown>[] {
-  return filterChangedPushRows(table, rows, snapshots).filter((row) => {
-    const snapshot = snapshots.get(snapKey(table, String(row.id)));
-    if (snapshot?.end_time && !row.end_time) return false;
-    return true;
-  });
+  return filterTimedEventPushRowsPure(rows, snapshots, (row) =>
+    snapKey(table, String(row.id))
+  );
 }
 
 async function getLocalRow(
@@ -1032,6 +1053,19 @@ async function applyRemoteSleep(
     const id = String(row.id);
     const local = await getLocalRow(sleepEvents, id);
     const remoteEnd = row.end_time ? String(row.end_time) : null;
+    const localEnd = local?.endTime != null ? String(local.endTime) : null;
+
+    // Never replace a local end with a still-open remote row. A later sync can
+    // bump remote.updated_at on an open sleep without ending it; that must not
+    // wipe an unpushed (or just-ended) end on this phone.
+    if (
+      shouldKeepLocalEndOverRemoteOpen({
+        localEndTime: localEnd,
+        remoteEndTime: remoteEnd,
+      })
+    ) {
+      continue;
+    }
 
     if (local && snapshots.has(snapKey('sleep_events', id))) {
       const dirty = hasUnpushedLocalChanges(
@@ -1118,6 +1152,17 @@ async function applyRemotePauses(
     const id = String(row.id);
     const local = await getLocalRow(sleepPauses, id);
     const remoteEnd = row.end_time ? String(row.end_time) : null;
+    const localEnd = local?.endTime != null ? String(local.endTime) : null;
+
+    // Same as sleep/feed: never reopen a locally ended pause from an open remote.
+    if (
+      shouldKeepLocalEndOverRemoteOpen({
+        localEndTime: localEnd,
+        remoteEndTime: remoteEnd,
+      })
+    ) {
+      continue;
+    }
 
     if (local && snapshots.has(snapKey('sleep_pauses', id))) {
       const localPayload = {
@@ -1184,6 +1229,16 @@ async function applyRemoteFeedings(
     const id = String(row.id);
     const local = await getLocalRow(feedingEvents, id);
     const remoteEnd = row.end_time ? String(row.end_time) : null;
+    const localEnd = local?.endTime != null ? String(local.endTime) : null;
+
+    if (
+      shouldKeepLocalEndOverRemoteOpen({
+        localEndTime: localEnd,
+        remoteEndTime: remoteEnd,
+      })
+    ) {
+      continue;
+    }
 
     if (local && snapshots.has(snapKey('feeding_events', id))) {
       const dirty = hasUnpushedLocalChanges(
@@ -1514,7 +1569,7 @@ async function applyRemoteTags(rows: Record<string, unknown>[]): Promise<number>
  *
  * This stops a stale open sleep on phone B from overwriting an ended sleep from phone A.
  */
-export async function syncHouseholdData(): Promise<SyncResult> {
+async function syncHouseholdDataUnlocked(): Promise<SyncResult> {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: 'Supabase is not configured.' };
   }

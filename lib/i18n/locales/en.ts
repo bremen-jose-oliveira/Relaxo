@@ -477,9 +477,13 @@ export const en = {
     syncNow: 'Sync now',
     syncing: 'Syncing…',
     syncDone: 'Sync complete',
-    syncUpToDate: 'Synced — this phone already matches the cloud.',
+    syncUpToDate: 'Synced — no changes this round.',
     syncCounts: '↑ {{pushed}} sent · ↓ {{pulled}} received',
     syncFailed: 'Sync failed',
+    syncStatusSyncing: 'Syncing…',
+    syncStatusFailed: 'Sync failed — open Settings to retry',
+    syncStatusOk: 'Synced {{time}}',
+    syncStatusNever: 'Not synced yet',
     createHousehold: 'Create household',
     creatingHousehold: 'Creating…',
     householdName: 'Household name',
@@ -560,6 +564,67 @@ export const en = {
   settings: {
     title: 'Settings',
     subtitle: 'Language, updates, cloud sync, and data',
+  },
+  legal: {
+    sectionTitle: 'Legal & support',
+    privacy: 'Privacy Policy',
+    terms: 'Terms of Use',
+    impressum: 'Impressum',
+    openInBrowser: 'Open in browser',
+    contactSupport: 'Contact support',
+    medicalDisclaimer:
+      'Relaxo is for logging and general guidance only — not medical advice.',
+    supportFailed: 'Could not open mail. Write to {{email}}.',
+    impressumFailed: 'Could not open Impressum. Visit {{url}}.',
+  },
+  onboarding: {
+    title: 'Welcome',
+    welcomeTitle: 'Welcome to Relaxo',
+    welcomeBody:
+      'Log sleep and care with your partner. Predictions and insights are orientation only.',
+    acceptDisclaimer: 'I understand this is not medical advice',
+    legalLinksHint: 'You can read our Privacy Policy and Terms of Use anytime.',
+    continue: 'Continue',
+    skip: 'Skip',
+    createBabyTitle: 'Add your baby',
+    createBabyBody: 'A name and birth date unlock nap predictions and age tips.',
+    babyName: 'Name',
+    birthDate: 'Birth date',
+    saveBaby: 'Save and continue',
+    skipBaby: 'Skip for now',
+    importTip:
+      'You can import Napper CSV later in Settings → Import data.',
+    cloudTitle: 'Sync with a partner (optional)',
+    cloudBody:
+      'Sign in with Apple to share logs in a household. You can do this later in Settings.',
+    cloudSkip: 'Continue without cloud',
+    goToSettings: 'Open Settings later',
+    widgetTitle: 'Quick logging',
+    widgetBody:
+      'Add the Relaxo Sleep widget and use Live Activity / Dynamic Island to start or end naps without unlocking the phone.',
+    done: 'Get started',
+    nameRequired: 'Enter a name to continue, or skip.',
+  },
+  dataPrivacy: {
+    sectionTitle: 'Your data',
+    wipeLocal: 'Wipe all local data',
+    wipeLocalHint: 'Removes babies and care logs from this phone. Does not delete a cloud account.',
+    wipeLocalConfirmTitle: 'Wipe this phone?',
+    wipeLocalConfirmMsg:
+      'All local care data will be deleted. Export a CSV first if you want a backup.',
+    wipeLocalConfirm: 'Wipe local data',
+    deleteAccount: 'Delete account',
+    deleteAccountHint:
+      'Removes your cloud sign-in and household membership, then wipes this phone.',
+    deleteAccountConfirmTitle: 'Delete your account?',
+    deleteAccountConfirmMsg:
+      'This cannot be undone. Shared household logs may remain for partners. Export a CSV first if you need a copy.',
+    deleteAccountConfirm: 'Delete account',
+    exportFirst: 'Export CSV first',
+    cancel: 'Cancel',
+    wiped: 'Local data wiped',
+    accountDeleted: 'Account deleted',
+    deleteFailed: 'Could not delete account. Try again or contact support.',
   },
 } as const;
 

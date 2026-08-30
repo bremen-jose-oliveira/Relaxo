@@ -1,5 +1,6 @@
 import SwiftUI
 import WatchConnectivity
+import WatchKit
 
 struct ContentView: View {
   @State private var snapshot = SleepSnapshotStore.load()
@@ -81,6 +82,9 @@ struct ContentView: View {
     .onAppear { refresh() }
     .onReceive(timer) { date in
       tick = date
+      refresh()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: WKExtension.applicationDidBecomeActiveNotification)) { _ in
       refresh()
     }
   }

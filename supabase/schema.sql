@@ -15,7 +15,8 @@ create table if not exists public.households (
   id uuid primary key default gen_random_uuid(),
   name text not null default 'Family',
   invite_code text not null unique,
-  created_by uuid not null references auth.users (id),
+  -- Nullable so account deletion can clear ownership (ON DELETE SET NULL).
+  created_by uuid references auth.users (id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -433,5 +434,59 @@ alter table public.day_context_tags replica identity full;
 alter table public.babies replica identity full;
 alter table public.daily_chores replica identity full;
 alter table public.daily_chore_completions replica identity full;
+
+-- Account self-deletion (App Store). See also 0025_delete_my_account.sql.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  update public.households h
+  set created_by = m.user_id
+  from (
+    select distinct on (hm.household_id)
+      hm.household_id,
+      hm.user_id
+    from public.household_members hm
+    where hm.user_id <> uid
+      and exists (
+        select 1
+        from public.households hh
+        where hh.id = hm.household_id
+          and hh.created_by = uid
+      )
+    order by hm.household_id, hm.joined_at asc, hm.user_id asc
+  ) m
+  where h.id = m.household_id
+    and h.created_by = uid;
+
+  delete from public.household_members where user_id = uid;
+
+  delete from public.households h
+  where h.created_by = uid
+    and not exists (
+      select 1 from public.household_members m where m.household_id = h.id
+    );
+
+  update public.households
+  set created_by = null
+  where created_by = uid;
+
+  delete from public.profiles where id = uid;
+
+  delete from auth.users where id = uid;
+end;
+$$;
+
+revoke all on function public.delete_my_account() from public;
+grant execute on function public.delete_my_account() to authenticated;
 
 notify pgrst, 'reload schema';

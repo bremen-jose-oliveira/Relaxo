@@ -1,4 +1,4 @@
-import { DarkTheme, DefaultTheme, ThemeProvider, Stack } from 'expo-router';
+import { DarkTheme, DefaultTheme, ThemeProvider, Stack, router, type Href } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
@@ -81,6 +81,21 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const locale = useAppStore((s) => s.locale);
   const t = useTranslation(locale);
+  const initialize = useAppStore((s) => s.initialize);
+  const isInitialized = useAppStore((s) => s.isInitialized);
+  const onboardingCompleted = useAppStore((s) => s.onboardingCompleted);
+  const babies = useAppStore((s) => s.babies);
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    if (!onboardingCompleted && babies.length === 0) {
+      router.replace('/onboarding' as Href);
+    }
+  }, [isInitialized, onboardingCompleted, babies.length]);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? RelaxoDarkTheme : RelaxoLightTheme}>
@@ -100,6 +115,28 @@ function RootLayoutNav() {
             title: t('tabs.settings'),
             presentation: 'card',
             headerBackTitle: t('tabs.home'),
+          }}
+        />
+        <Stack.Screen
+          name="legal/privacy"
+          options={{
+            title: t('legal.privacy'),
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="legal/terms"
+          options={{
+            title: t('legal.terms'),
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="onboarding"
+          options={{
+            headerShown: false,
+            presentation: 'fullScreenModal',
+            gestureEnabled: false,
           }}
         />
       </Stack>

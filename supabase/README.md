@@ -81,6 +81,7 @@ node scripts/supabase-migrate.mjs
 | [`0022_realtime_household.sql`](./0022_realtime_household.sql) | Realtime publication for partner pull |
 | [`0023_sleep_settle.sql`](./0023_sleep_settle.sql) | Settle minutes / quality / aid / place |
 | [`0024_day_context_tags_partial_unique.sql`](./0024_day_context_tags_partial_unique.sql) | Live-only unique index for day tags |
+| [`0025_delete_my_account.sql`](./0025_delete_my_account.sql) | `delete_my_account()` RPC + nullable `households.created_by` (ON DELETE SET NULL) so shared-household owners can delete accounts |
 
 Applied versions are stored in `public.relaxo_schema_migrations`.
 

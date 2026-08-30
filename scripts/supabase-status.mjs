@@ -185,6 +185,38 @@ async function checkJoinRpc() {
   return { ok: false, detail: message, hint: '0014_join_household_by_invite.sql' };
 }
 
+async function checkDeleteAccountRpc() {
+  const { ok, status, json, text } = await rest('rpc/delete_my_account', {
+    method: 'POST',
+    body: {},
+  });
+  const message = json?.message || json?.error || text || `HTTP ${status}`;
+
+  if (/Could not find the function|PGRST202/i.test(message)) {
+    return {
+      ok: false,
+      detail: message,
+      hint: 'Run supabase/0025_delete_my_account.sql in SQL Editor',
+    };
+  }
+  if (
+    ok ||
+    status === 200 ||
+    /Not authenticated|null/i.test(message) ||
+    json === null
+  ) {
+    return { ok: true, detail: 'function exists' };
+  }
+  if (status >= 400 && status < 500 && !/Could not find/i.test(message)) {
+    return { ok: true, detail: `function exists (${message})` };
+  }
+  return {
+    ok: false,
+    detail: message,
+    hint: '0025_delete_my_account.sql',
+  };
+}
+
 async function main() {
   console.log(`Relaxo Supabase status\n  ${url}\n`);
 
@@ -216,6 +248,16 @@ async function main() {
     console.log(`  ✗ join_household_by_invite()`);
     console.log(`      ${rpc.detail}`);
     if (rpc.hint) console.log(`      → ${rpc.hint}`);
+  }
+
+  const deleteRpc = await checkDeleteAccountRpc();
+  if (deleteRpc.ok) {
+    console.log(`  ✓ delete_my_account()  ${deleteRpc.detail}`);
+  } else {
+    failed += 1;
+    console.log(`  ✗ delete_my_account()`);
+    console.log(`      ${deleteRpc.detail}`);
+    if (deleteRpc.hint) console.log(`      → ${deleteRpc.hint}`);
   }
 
   console.log('');

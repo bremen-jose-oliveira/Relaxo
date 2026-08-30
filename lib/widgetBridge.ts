@@ -28,8 +28,19 @@ export async function publishWidgetBridge(): Promise<void> {
       return;
     }
 
+    // Prefer a fresh access token so widget Sync / Watch don't fail with 401.
+    const supabase = (await import('@/lib/supabase')).getSupabase();
+    if (supabase) {
+      try {
+        await supabase.auth.refreshSession();
+      } catch {
+        // Fall through to cached session.
+      }
+    }
+
     const session = await getSession();
     const accessToken = session?.access_token;
+    const refreshToken = session?.refresh_token;
     if (!accessToken || !SUPABASE_URL || !SUPABASE_KEY) {
       setWidgetBridge(null);
       return;
@@ -37,6 +48,7 @@ export async function publishWidgetBridge(): Promise<void> {
 
     setWidgetBridge({
       accessToken,
+      refreshToken: refreshToken || undefined,
       supabaseUrl: SUPABASE_URL,
       supabaseKey: SUPABASE_KEY,
       householdId,
